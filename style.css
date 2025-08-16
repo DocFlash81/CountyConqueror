@@ -1,0 +1,117 @@
+/* style.css */
+
+body {
+  font-family: sans-serif;
+  margin: 40px;
+  background-color: #f8f9fa;
+  color: #222;
+}
+
+h1 {
+  font-size: 3em;
+  margin-bottom: 20px;
+}
+
+button {
+  font-size: 1.1em;
+  margin-right: 10px;
+  padding: 10px 16px;
+  border: 1px solid #444;
+  border-radius: 6px;
+  background-color: white;
+  cursor: pointer;
+  transition: background-color 0.2s ease-in-out;
+}
+
+button:hover {
+  background-color: #ddd;
+}
+
+.roster-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 16px;
+}
+
+.roster-table thead th {
+  text-align: left;
+  border-bottom: 2px solid #ccc;
+  padding: 6px 8px;
+}
+
+.roster-table tbody td {
+  padding: 6px 8px;
+  border-bottom: 1px solid #eee;
+}
+
+.roster-table .num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;     /* align digits */
+  font-feature-settings: "tnum";
+  width: 7ch;                              /* nice fixed width for numbers */
+}
+
+.roster-table .center {
+  text-align: center;
+  width: 4ch;
+}
+
+#routeControls { display:flex; gap:16px; align-items:center; flex-wrap:wrap; }
+#routeControls label { user-select:none; }
+#dirBtn { padding:6px 10px; }
+
+.roster-table .county { width: 25%; }
+.roster-table .state  { width: 8ch; }
+
+#mapPanel { height: 400px; }
+.leaflet-container { font: inherit; }
+
+.roster-table .notes {
+  text-align: left;
+  max-width: 60rem;
+  white-space: normal;
+  word-break: break-word;
+}
+
+/* Layout grid */
+.grid {
+  display: grid;
+  gap: 24px;
+}
+
+/* Mobile: stack everything */
+.left-col, .right-col, .grid-roster { grid-area: auto; }
+
+/* Desktop: two columns, roster full width below */
+@media (min-width: 900px) {
+  .grid {
+    grid-template-columns: 380px 1fr; /* left fixed-ish, right flexible */
+    grid-template-areas:
+      "left  map"
+      "roster roster";
+    align-items: start;
+  }
+  .left-col  { grid-area: left; }
+  .right-col { grid-area: map; }
+  .grid-roster { grid-area: roster; }
+
+  /* keep the map visible while scrolling */
+  .right-col #mapPanel {
+    position: sticky;
+    top: 12px;
+    height: 70vh;
+  }
+}
+
+/* tidy spacing in left column */
+.left-col .section { margin-bottom: 16px; }
+
+.roster-table .rownum {
+  text-align: right;
+  width: 4ch;
+  color: #666;
+}
+
+.roster-table .rownum { text-align:right; width:4ch; color:#666; }
+.roster-table tr.vital .county { color:#b91c1c; font-weight:600; } /* red county name */
+
