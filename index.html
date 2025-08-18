@@ -1,62 +1,91 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <meta charset="UTF-8" /> <!-- Most common character set -->
+  <!-- Make mobile devices honor screen width -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/> 
   <title>County Conqueror</title>
   <link rel="stylesheet" href="style.css" />
-
+  <!-- Stylesheet and script for leaflet -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <!-- PapaParse helps read csv files -->
   <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
-
-  <link
-  rel="stylesheet"
-  href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-/>
-<script
-  src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js">
-</script>
-
-<script src="https://unpkg.com/@tmcw/togeojson@5.8.1/dist/togeojson.umd.js"></script>
-
+  <!-- togeojson helps translate kml's into leaflet -->
+  <script src="https://unpkg.com/@tmcw/togeojson@5.8.1/dist/togeojson.umd.js"></script>
 </head>
+
 <body>
 
-<div class="grid">
-  <!-- LEFT COLUMN: title, select, controls, summary -->
-  <div class="left-col">
-    <h1>County Conqueror</h1>
+<!-- Mode Switcher -->
+<div id="mode-switcher">
+  <button onclick="setMode('route')">Route Detail</button>
+  <button onclick="setMode('county')">County Focus</button>
+  <button onclick="setMode('connections')">Connections</button>
+</div>
 
-    <div class="section">
-      <label for="routeSelect">Select a Route:</label>
-      <select id="routeSelect">
-        <option value="">-- Choose a Route --</option>
-      </select>
-    </div>
-
-    <div class="section" id="routeControls">
-      <button id="dirBtn" type="button">Direction: Forward</button>
-      <label><input type="checkbox" id="touchChk"> Remove reentries</label>
-      <label><input type="checkbox" id="lumpChk"> Collapse independent cities</label>
-    </div>
-
-    <div class="section">
-      <h2>Route Summary</h2>
-      <div id="ifactsPanel">[Route details will appear here]</div>
-    </div>
+<!-- Placeholder for Controls -->
+<div id="controls">
+  <div id="route-detail-controls" class="section">
+    <label for="routeSelect">Select a Route:</label>
+    <select id="routeSelect">
+      <option value="">-- Choose a Route --</option>
+    </select>
   </div>
 
-  <!-- RIGHT COLUMN: map -->
-  <div class="right-col">
-    <h2>Route Map</h2>
-    <div id="mapPanel" style="height: 400px; background-color: #eee;">[Map goes here]</div>
+  <div id="county-focus-controls" class="section" style="display:none;">
+    <!-- County Focus controls go here -->
   </div>
 
-  <!-- FULL-WIDTH BELOW: roster -->
-  <div class="section grid-roster">
-    <h2>County Roster</h2>
-    <div id="rosterPanel">[List of counties will appear here]</div>
+  <div id="connections-controls" class="section" style="display:none;">
+    <!-- Connections controls go here -->
   </div>
 </div>
+
+<!-- Route Detail UI -->
+<div id="route-detail-ui">
+  <div class="grid">
+    <!-- LEFT COLUMN: title, select, controls, summary -->
+    <div class="left-col">
+      <h1>County Conqueror</h1>
+
+      <div class="section" id="routeControls">
+        <button id="dirBtn" type="button">Direction: Forward</button>
+        <label><input type="checkbox" id="touchChk"> Remove reentries</label>
+        <label><input type="checkbox" id="lumpChk"> Collapse independent cities</label>
+      </div>
+
+      <div class="section">
+        <h2>Route Summary</h2>
+        <div id="ifactsPanel">[Route details will appear here]</div>
+      </div>
+    </div> <!-- End of Left Column -->
+
+    <!-- RIGHT COLUMN: map -->
+    <div class="right-col">
+      <h2>Route Map</h2>
+      <div id="mapPanel" style="height: 400px; background-color: #eee;">[Map goes here]</div>
+    </div> <!-- End of Right Column-->
+
+    <!-- FULL-WIDTH BELOW: roster -->
+    <div class="section grid-roster">
+      <h2>County Roster</h2>
+      <div id="rosterPanel">[List of counties will appear here]</div>
+    </div> <!-- End of Lower Panel -->
+  </div> <!-- End of grid -->
+</div> <!-- End of Route Detail UI -->
+
+<div id="county-focus-ui" style="display:none;">
+  <p><b>County Focus Mode</b>(placeholder)</p>
+  <div id="map-county"></div>
+</div>
+
+<div id="connections-ui" style="display:none;">
+  <p><b>Connections Mode</b>(placeholder)</p>
+  <div id="map-connections"></div>
+</div>
+
 
 <script src="script.js"></script>
 

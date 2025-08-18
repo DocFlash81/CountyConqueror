@@ -1,47 +1,36 @@
+
 // script.js
 
-function toNum(x) {
-  const s = (x ?? "").toString().trim();
-  if (s === "") return 0;
-  const v = parseFloat(s.replace(/,/g, ""));
-  return Number.isFinite(v) ? v : 0;
-}
+
+// ------ GLOBALS ------
 
 let routeData = [];
 let routeInfo = [];
 let CountyCentroids = [];
 let leafletMap, markersLayer;
-let currentDirection = 0; // 0 = forward, 1 = reverse
-let touchMode = 0;        // 1 = on, 0 = off
-let lumpMode = 0;         // 1 = on, 0 = off
-let kmlLayer = null;        // yellow line
-let kmlCasingLayer = null;  // black outline
+let currentDirection = 0;         // 0 = forward, 1 = reverse
+let touchMode = 0;                // 1 = on, 0 = off
+let lumpMode = 0;                 // 1 = on, 0 = off
+let kmlLayer = null;              // yellow line
+let kmlCasingLayer = null;        // black outline
 let routePolyLayer = null;
 let currentVitalKeys = new Set(); // "County|ST"
 
 const routePolyCache = new Map();
 
-function kmlWeights(z) {
-  // tune these to taste
-  const line = Math.max(2, Math.round((z - 5) * 0.9));   // main yellow
-  const casing = Math.max(line + 3, 5);                   // black halo
-  return { line, casing };
-}
 
-function polygonStyleForZoom(z) {
-  return {
-    color: "#4b5563",           // county border
-    weight: z >= 9 ? 1.2 : z >= 7 ? 0.9 : 0.6,
-    fillColor: "#3d8bfd",
-    fillOpacity: z >= 8 ? 0.25 : 0.18,   // a bit lighter when zoomed out
-  };
-}
+// ------ INITIALIZATION ------
 
+// initMap creates the initial, blank map of the US. counties, polygons, kmls, etc get added later when needed
 function initMap() {
-  leafletMap = L.map("mapPanel", { zoomControl: true });
+  leafletMap = L.map("mapPanel", { zoomControl: true }); // initiate map in mapPanel
+
+  // basemap
+  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    attribution: "&copy; OpenStreetMap"
+  }).addTo(leafletMap);
 
   leafletMap.createPane("counties"); // polygons
-  
   leafletMap.getPane("counties").style.zIndex = 410;
 
   leafletMap.createPane("routes");   // KML line + casing
@@ -49,111 +38,56 @@ function initMap() {
 
   leafletMap.on("zoomend", applyZoomStyles);   // react to zoom
 
-  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-    attribution: "&copy; OpenStreetMap"
-  }).addTo(leafletMap);
   markersLayer = L.layerGroup().addTo(leafletMap);
   leafletMap.setView([39.5, -98.35], 4);
+
+  // Fix possible layout glitch
   setTimeout(() => leafletMap.invalidateSize(), 0);
 }
 
-function clearKmlLayer() {
-  if (kmlLayer)       { leafletMap.removeLayer(kmlLayer);       kmlLayer = null; }
-  if (kmlCasingLayer) { leafletMap.removeLayer(kmlCasingLayer); kmlCasingLayer = null; }
+
+// ------ HELPERS ------
+
+// ------ Universal helpers ------
+
+// toNum converts strings to numeric. Used in multiple functions
+function toNum(x) {
+  const s = (x ?? "").toString().trim();
+  if (s === "") return 0;
+  const v = parseFloat(s.replace(/,/g, ""));
+  return Number.isFinite(v) ? v : 0;
 }
 
-async function plotRosterPolygons(route, roster) {
-  if (!leafletMap) return;
-
-  // remove prior polygons
-  if (routePolyLayer) {
-    leafletMap.removeLayer(routePolyLayer);
-    routePolyLayer = null;
-  }
-
-  // fetch per‑route GeoJSON from your repo
-  const url = `https://raw.githubusercontent.com/DocFlash81/cc-data/refs/heads/main/kml/polygons/${route}.geojson`;
-
-  console.log( "Fetching polygons:", url);
-
-  try {
-    const res = await fetch(url, { mode: "cors" });
-    console.log("HTTP status:", res.status);  // <— log 2
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const gj = await res.json();
-    console.log("Feature count:", gj?.features?.length || 0);  // <— log 3
-
-
-    //const gj = routePolyCache.has(route)
-    //  ? routePolyCache.get(route)
-    //  : await (await fetch(url, { mode: "cors" })).json();
-
-    routePolyCache.set(route, gj);
-
-    routePolyLayer = L.geoJSON(gj, {
-      pane: "counties",
-      style: f => {
-        const name = f.properties?.NAME ?? "";
-        const st   = f.properties?.STUSPS ?? "";
-        const isVital = currentVitalKeys.has(`${name}|${st}`);
-        return {
-          color: isVital ? "#7f1d1d" : "#4b5563",    // border
-          weight: leafletMap.getZoom() >= 9 ? 1.2 : 0.8,
-          fillColor: isVital ? "#ef4444" : "#3d8bfd",// fill
-          fillOpacity: leafletMap.getZoom() >= 8 ? 0.28 : 0.20
-        };
-      },
-  onEachFeature: (f, layer) => {
-    const name = f.properties?.NAME ?? "";
-    const st   = f.properties?.STUSPS ?? "";
-    const r    = roster?.find(x => `${x.County}|${x.State}` === `${name}|${st}`);
-    const miles = r ? Number(r.Miles).toFixed(1) : "";
-    layer.bindTooltip(
-      `${name}, ${st}${miles ? ` — ${miles} mi` : ""}`,
-      { sticky: true }
-    );
+// getKeys finds the first column that matches the regex
+function getKey(obj, regex) {
+  const keys = Object.keys(obj || {});
+  return keys.find(k => regex.test(k.trim()));
 }
 
-}).addTo(leafletMap);
-
-
-    const b = routePolyLayer.getBounds();
-    if (b.isValid()) leafletMap.fitBounds(b.pad(0.2));
-
-    // keep your KML on top if present
-    kmlCasingLayer?.bringToFront?.();
-    kmlLayer?.bringToFront?.();
-
-  } catch (err) {
-    console.warn("Polygon load failed; falling back to centroids:", err);
-    plotRosterOnMap(roster); // your existing centroid points
-  }
+// esc cleans up non-printable characters for HTML display (&nbsp for example)
+function esc(s) {
+  return String(s ?? "").replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
 }
 
-function applyZoomStyles() {
-  const z = leafletMap.getZoom();
-
-  // KML line weights
-  if (kmlLayer)       kmlLayer.setStyle({ weight: kmlWeights(z).line });
-  if (kmlCasingLayer) kmlCasingLayer.setStyle({ weight: kmlWeights(z).casing });
-
-  // Polygons: preserve vital red on every zoom
-  if (routePolyLayer) {
-    routePolyLayer.setStyle(f => {
-      const name = f.properties?.NAME ?? "";
-      const st   = f.properties?.STUSPS ?? "";
-      const isVital = currentVitalKeys.has(`${name}|${st}`);
-      return {
-        color:      isVital ? "#7f1d1d" : "#4b5563",
-        weight:     z >= 9 ? 1.2 : 0.8,
-        fillColor:  isVital ? "#ef4444" : "#3d8bfd",
-        fillOpacity:z >= 8 ? 0.28 : 0.20
-      };
-    });
-  }
+// kmlWeights decides how fat the lines should be given the zoom level
+function kmlWeights(z) {
+  // tune these to taste
+  const line = Math.max(2, Math.round((z - 5) * 0.9)); // main yellow
+  const casing = Math.max(line + 3, 5);                // black halo
+  return { line, casing };
 }
 
+// polygonStyleForZoom defines what the county polygons should look like
+function polygonStyleForZoom(z) {
+  return {
+    color: "#4b5563",                  // county border
+    weight: z >= 9 ? 1.2 : z >= 7 ? 0.9 : 0.6,
+    fillColor: "#3d8bfd",
+    fillOpacity: z >= 8 ? 0.25 : 0.18,   // a bit lighter when zoomed out
+  };
+}
 
+// parseCsv fetches a CSV from a URL and passes it into a JS object
 function parseCsv(url, onComplete) {
   Papa.parse(url, {
     download: true,
@@ -167,15 +101,9 @@ function parseCsv(url, onComplete) {
   });
 }
 
-function esc(s) {
-  return String(s ?? "").replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
-}
+// ------ Mapping Helpers -------
 
-function getKey(obj, regex) {
-  const keys = Object.keys(obj || {});
-  return keys.find(k => regex.test(k.trim()));
-}
-
+// addKmlFromUrl reads and places a Kml onto the map
 async function addKmlFromUrl(url, opts = {}) {
   const { silent = false } = opts;
   try {
@@ -223,6 +151,7 @@ async function addKmlFromUrl(url, opts = {}) {
   }
 }
 
+// addKmlForRoute is a wrapper for the previous function, addKmlFromUrl
 async function addKmlForRoute(route) {
   if (!route) return;
   const base = "https://raw.githubusercontent.com/DocFlash81/cc-data/refs/heads/main/kml/";
@@ -238,80 +167,170 @@ async function addKmlForRoute(route) {
   clearKmlLayer();
 }
 
-document.addEventListener("DOMContentLoaded", () => {
-  const nocache = `?v=${Date.now()}`;
+// clearKmlLayer removes the kml from a map
+function clearKmlLayer() {
+  if (kmlLayer)       { leafletMap.removeLayer(kmlLayer);       kmlLayer = null; }
+  if (kmlCasingLayer) { leafletMap.removeLayer(kmlCasingLayer); kmlCasingLayer = null; }
+}
 
-  // 1) Load route-county rows
-  parseCsv("https://raw.githubusercontent.com/DocFlash81/cc-data/refs/heads/main/MasterRouteCountyList.csv" + nocache, (data) => {
-    routeData = data;
+async function plotRosterPolygons(route, roster) {
+  if (!leafletMap) return;
 
-    // 2) Load summary
-    parseCsv("https://raw.githubusercontent.com/DocFlash81/cc-data/refs/heads/main/RouteInfo.csv" + nocache, (data2) => {
-      routeInfo = data2;
+  // remove prior polygons
+  if (routePolyLayer) {
+    leafletMap.removeLayer(routePolyLayer);
+    routePolyLayer = null;
+  }
 
-      // 3) Load county centroids
-      parseCsv("https://raw.githubusercontent.com/DocFlash81/cc-data/refs/heads/main/CountyCentroids.csv" + nocache, (cent) => {
-        CountyCentroids = cent;
+  // fetch per‑route GeoJSON from your repo
+  const url = `https://raw.githubusercontent.com/DocFlash81/cc-data/refs/heads/main/kml/polygons/${route}.geojson`;
 
-        populateRouteDropdown();
-        initMap();  // <-- set up Leaflet once
+  console.log( "Fetching polygons:", url);
 
-        window.addEventListener("resize", () => {
-            if (leafletMap) leafletMap.invalidateSize();
-        });
+  try {
+    const res = await fetch(url, { mode: "cors" });
+    console.log("HTTP status:", res.status);  // <— log 2
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const gj = await res.json();
+    console.log("Feature count:", gj?.features?.length || 0);  // <— log 3
 
-        setupControls();
 
-        document.getElementById("routeSelect").addEventListener("change", () => {
-          loadRoute();
-          const mapEl = document.getElementById("mapPanel");
-          if (mapEl) mapEl.scrollIntoView({ behavior: "smooth", block: "start" });
-        });
-        updateControlsUI();
+    //const gj = routePolyCache.has(route)
+    //  ? routePolyCache.get(route)
+    //  : await (await fetch(url, { mode: "cors" })).json();
 
-      });
+    routePolyCache.set(route, gj);
+
+    routePolyLayer = L.geoJSON(gj, {
+      pane: "counties",
+      style: f => {
+        const name = f.properties?.NAME ?? "";
+        const st   = f.properties?.STUSPS ?? "";
+        const isVital = currentVitalKeys.has(`${name}|${st}`);
+        return {
+          color: isVital ? "#7f1d1d" : "#4b5563",    // border
+          weight: leafletMap.getZoom() >= 9 ? 1.2 : 0.8,
+          fillColor: isVital ? "#ef4444" : "#3d8bfd",// fill
+          fillOpacity: leafletMap.getZoom() >= 8 ? 0.28 : 0.20
+        };
+      },
+      onEachFeature: (f, layer) => {
+        const name = f.properties?.NAME ?? "";
+        const st   = f.properties?.STUSPS ?? "";
+        const r    = roster?.find(x => `${x.County}|${x.State}` === `${name}|${st}`);
+        const miles = r ? Number(r.Miles).toFixed(1) : "";
+        layer.bindTooltip(
+        `${name}, ${st}${miles ? ` — ${miles} mi` : ""}`,
+        { sticky: true }
+        );
+      }
+    }).addTo(leafletMap);
+
+    const b = routePolyLayer.getBounds();
+    if (b.isValid()) leafletMap.fitBounds(b.pad(0.2));
+
+    // keep your KML on top if present
+    kmlCasingLayer?.bringToFront?.();
+    kmlLayer?.bringToFront?.();
+
+  } catch (err) {
+    console.warn("Polygon load failed; falling back to centroids:", err);
+    plotRosterOnMap(roster); // your existing centroid points
+  }
+}
+
+// applyZoomStyles applies the styles to the KML and polygons when we zoom
+function applyZoomStyles() {
+  const z = leafletMap.getZoom();
+
+  // KML line weights
+  if (kmlLayer)       kmlLayer.setStyle({ weight: kmlWeights(z).line });
+  if (kmlCasingLayer) kmlCasingLayer.setStyle({ weight: kmlWeights(z).casing });
+
+  // Polygons: preserve vital red on every zoom
+  if (routePolyLayer) {
+    routePolyLayer.setStyle(f => {
+      const name = f.properties?.NAME ?? "";
+      const st   = f.properties?.STUSPS ?? "";
+      const isVital = currentVitalKeys.has(`${name}|${st}`);
+      return {
+        color:      isVital ? "#7f1d1d" : "#4b5563",
+        weight:     z >= 9 ? 1.2 : 0.8,
+        fillColor:  isVital ? "#ef4444" : "#3d8bfd",
+        fillOpacity:z >= 8 ? 0.28 : 0.20
+      };
     });
-  });
-});
+  }
+}
 
-function setupControls() {
+
+
+// ------ MODES ------
+
+
+
+// ------ ROUTE DETAIL MODE ------
+
+// setupRouteDetailControls creates the inputs Route Detail mode uses
+function setupRouteDetailControls() {
   document.getElementById("dirBtn").addEventListener("click", () => {
     currentDirection = currentDirection ? 0 : 1;
-    updateControlsUI();
+    updateRouteDetailControlsUI();
     loadRoute(); // re-render with new direction
   });
   document.getElementById("touchChk").addEventListener("change", (e) => {
     touchMode = e.target.checked ? 1 : 0;
-    updateControlsUI();
+    updateRouteDetailControlsUI();
     loadRoute();
   });
   document.getElementById("lumpChk").addEventListener("change", (e) => {
     lumpMode = e.target.checked ? 1 : 0;
-    updateControlsUI();
+    updateRouteDetailControlsUI();
     loadRoute();
   });
 }
 
-function updateControlsUI() {
+// updateRouteDetailControlsUI resets to the new settings
+function updateRouteDetailControlsUI() {
   const dirBtn = document.getElementById("dirBtn");
   dirBtn.textContent = currentDirection ? "Direction: Reverse" : "Direction: Forward";
   document.getElementById("touchChk").checked = !!touchMode;
   document.getElementById("lumpChk").checked  = !!lumpMode;
 }
 
-// Fills the dropdown menu
+// populateRouteDropdown fills the dropdown menu with optgroups
 function populateRouteDropdown() {
   const dropdown = document.getElementById("routeSelect");
-  const uniqueRoutes = [...new Set(routeData.map(d => d.Route))].sort();
+  dropdown.innerHTML = "";  // clear existing
 
-  uniqueRoutes.forEach(route => {
-    const option = document.createElement("option");
-    option.value = route;
-    option.text = route;
-    dropdown.appendChild(option);
+  // Group routes by Type from routeInfo
+  const groups = {};
+  routeInfo.forEach(r => {
+    const type = r.Type || "Other";
+    if (!groups[type]) groups[type] = [];
+    groups[type].push(r.Route);
+  });
+
+  // Sort group keys and each group's routes
+  Object.keys(groups).sort().forEach(type => {
+    const optgroup = document.createElement("optgroup");
+    optgroup.label = type;
+
+    groups[type]
+      .filter((v, i, arr) => arr.indexOf(v) === i) // unique within group
+      .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
+      .forEach(route => {
+        const option = document.createElement("option");
+        option.value = route;
+        option.text = route;
+        optgroup.appendChild(option);
+      });
+
+    dropdown.appendChild(optgroup);
   });
 }
 
+//computeTriplist mirrors R CountyLogic.R. Sets up removal flags for touch (reentry) mode
 function computeTriplist(route, direction = 0) {
   // figure out the actual column names once
   const sample = routeData[0] || {};
@@ -350,7 +369,7 @@ function computeTriplist(route, direction = 0) {
   return tl;
 }
 
-// touch: collapse reentries (use sliver numeric if present, else County/State)
+// applyTouch collapses reentries (use sliver numeric if present, else County/State)
 function applyTouch(triplist, touch = 0) {
   if (!touch) return triplist;
   const grouped = new Map();
@@ -369,7 +388,7 @@ function applyTouch(triplist, touch = 0) {
   return Array.from(grouped.values()).map((d, idx) => ({ ...d, Row: idx + 1, Remove: 0 }));
 }
 
-// lump: independent cities into parent; key = LumpID else unique row
+// applyLump collapses all independent cities into parent; key = LumpID else unique row
 function applyLump(df1, lump = 0) {
   if (!lump) return df1;
   // Build group key that cannot collide with LumpID
@@ -399,6 +418,7 @@ function applyLump(df1, lump = 0) {
   return Array.from(byCounty.values());
 }
 
+// renderRoster creates the view for the chosen roster
 function renderRoster(roster) {
   let cum = 0;
 
@@ -438,6 +458,7 @@ function renderRoster(roster) {
     </table>`;
 }
 
+// buildRoster is the set of steps that actually creates the roster
 function buildRoster(route, { direction = 0, touch = 0, lump = 0 } = {}) {
   const triplist = computeTriplist(route, direction);  // df1 base
   const afterTouch = applyTouch(triplist, touch);      // apply reentry collapse if touch==1
@@ -445,9 +466,10 @@ function buildRoster(route, { direction = 0, touch = 0, lump = 0 } = {}) {
   return afterLump;
 }
 
+// plotRosterOnMap plots the roster on the map, and is used by multiple modes
 function plotRosterOnMap(roster) {
-  if (!leafletMap || !markersLayer) return;   // <-- updated
-  markersLayer.clearLayers();                  // <-- updated
+  if (!leafletMap || !markersLayer) return;
+  markersLayer.clearLayers();
 
   const pts = [];
   roster.forEach(r => {
@@ -469,22 +491,25 @@ function plotRosterOnMap(roster) {
       fillOpacity: 0.85
     });
     marker.bindTooltip(`${r.County}, ${r.State} — ${toNum(r.Miles).toFixed(1)} mi`, { sticky: true });
-    marker.addTo(markersLayer);               // <-- updated
+    marker.addTo(markersLayer);
     pts.push([lat, lon]);
   });
 
   if (pts.length) {
     const bounds = L.latLngBounds(pts);
-    leafletMap.fitBounds(bounds.pad(0.2));    // <-- updated
+    leafletMap.fitBounds(bounds.pad(0.2));
   }
 }
 
+// loadRoute is the action for this mode
 function loadRoute() {
   const route = document.getElementById("routeSelect").value;
   if (!route) {
     alert("Please select a route.");
     return;
   }
+
+  updateRouteDetailControlsUI();
 
   // Build roster (touch = collapse reentries, lump = merge ind. cities)
   const roster = buildRoster(route, { 
@@ -516,3 +541,61 @@ function loadRoute() {
   plotRosterPolygons(route, roster);
   addKmlForRoute(route);
 }
+
+// ------ COUNTY FOCUS MODE ------
+
+
+// ------ CONNECTIONS MODE ------
+
+
+// ------ BOOTSTRAP ------
+
+document.addEventListener("DOMContentLoaded", () => {
+  const nocache = `?v=${Date.now()}`;
+
+  // 1) Load route-county rows
+  parseCsv(
+    "https://raw.githubusercontent.com/DocFlash81/cc-data/refs/heads/main/MasterRouteCountyList.csv" + nocache,
+    (data) => {
+      routeData = data;
+
+      // 2) Load RouteInfo
+      parseCsv(
+        "https://raw.githubusercontent.com/DocFlash81/cc-data/refs/heads/main/RouteInfo.csv" + nocache,
+        (data2) => {
+          routeInfo = data2;
+
+          // 3) Load county centroids
+          parseCsv(
+            "https://raw.githubusercontent.com/DocFlash81/cc-data/refs/heads/main/CountyCentroids.csv" + nocache,
+            (cent) => {
+              CountyCentroids = cent;
+
+              initMap(); // <-- set up Leaflet once
+
+              window.addEventListener("resize", () => {
+                if (leafletMap) leafletMap.invalidateSize();
+              });
+
+              setupRouteDetailControls();
+
+              document
+                .getElementById("routeSelect")
+                .addEventListener("change", () => {
+                  loadRoute();
+                  const mapEl = document.getElementById("mapPanel");
+                  if (mapEl)
+                    mapEl.scrollIntoView({
+                      behavior: "smooth",
+                      block: "start",
+                    });
+                });
+
+              populateRouteDropdown();
+            }
+          );
+        }
+      );
+    }
+  );
+});
