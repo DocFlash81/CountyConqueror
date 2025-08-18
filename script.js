@@ -441,6 +441,7 @@ function renderRoster(roster) {
   }).join("");
 
   document.getElementById("rosterPanel").innerHTML = `
+  <div class="roster-scroll">
     <table class="roster-table">
       <thead>
         <tr>
@@ -455,7 +456,8 @@ function renderRoster(roster) {
         </tr>
       </thead>
       <tbody>${rows}</tbody>
-    </table>`;
+    </table>
+  </div>`;
 }
 
 // buildRoster is the set of steps that actually creates the roster

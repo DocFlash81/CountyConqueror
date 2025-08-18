@@ -30,12 +30,6 @@ button:hover {
   background-color: #ddd;
 }
 
-.roster-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 16px;
-}
-
 .roster-table thead th {
   text-align: left;
   border-bottom: 2px solid #ccc;
@@ -61,7 +55,7 @@ button:hover {
 
 .roster-table .notes {
   text-align: left;
-  max-width: 60rem;
+  min-width: 200px;
   white-space: normal;
   word-break: break-word;
 }
@@ -78,6 +72,23 @@ button:hover {
 
 .roster-table .rownum { text-align:right; width:4ch; color:#666; }
 .roster-table tr.vital .county { color:#b91c1c; font-weight:600; } /* red county name */
+
+.roster-scroll {
+  overflow-x: auto;   /* enable horizontal scrolling */
+  -webkit-overflow-scrolling: touch; /* smooth scrolling on iOS */
+}
+
+.roster-table {
+  table-layout: auto;
+  min-width: 600px;   /* force table to be wider than viewport */
+  border-collapse: collapse;
+  width: 100%;
+}
+
+.roster-table th, .roster-table td {
+  padding: 4px 8px;
+  white-space: nowrap; /* prevent notes from wrapping into tall cells */
+}
 
 #mode-switcher {
   position: sticky;
