@@ -32,15 +32,23 @@
     <select id="routeSelect">
       <option value="">-- Choose a Route --</option>
     </select>
-  </div>
+  </div> <!-- End of route-detail-controls-->
 
   <div id="county-focus-controls" class="section" style="display:none;">
-    <!-- County Focus controls go here -->
-  </div>
+    <label for="stateSelect">Select a State:</label>
+    <select id="stateSelect">
+      <option value="">-- Choose a State --</option>
+    </select>
 
+    <label for="countySelect">Select a County:</label>
+    <select id="countySelect" disabled>
+      <option value="">-- Choose a County --</option>
+    </select>
+  </div> <!-- End of county-focus-controls -->
+  
   <div id="connections-controls" class="section" style="display:none;">
     <!-- Connections controls go here -->
-  </div>
+  </div> <!-- End of connections-controls -->
 </div>
 
 <!-- Route Detail UI -->

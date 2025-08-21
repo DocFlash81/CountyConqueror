@@ -21,6 +21,7 @@ const routePolyCache = new Map();
 
 // ------ INITIALIZATION ------
 
+
 // initMap creates the initial, blank map of the US. counties, polygons, kmls, etc get added later when needed
 function initMap() {
   leafletMap = L.map("mapPanel", { zoomControl: true }); // initiate map in mapPanel
@@ -46,7 +47,9 @@ function initMap() {
 }
 
 
+
 // ------ HELPERS ------
+
 
 // ------ Universal helpers ------
 
@@ -267,6 +270,35 @@ function applyZoomStyles() {
 
 // ------ MODES ------
 
+
+function setMode(mode) {
+  // Hide all UIs
+  document.getElementById("route-detail-ui").style.display = "none";
+  document.getElementById("county-focus-ui").style.display = "none";
+  document.getElementById("connections-ui").style.display = "none";
+
+  // Hide all controls
+  document.getElementById("route-detail-controls").style.display = "none";
+  document.getElementById("county-focus-controls").style.display = "none";
+  document.getElementById("connections-controls").style.display = "none";
+
+  if (mode === "route") {
+    document.getElementById("route-detail-ui").style.display = "block";
+    document.getElementById("route-detail-controls").style.display = "block";
+  }
+
+  if (mode === "county") {
+    document.getElementById("county-focus-ui").style.display = "block";
+    document.getElementById("county-focus-controls").style.display = "block";
+    // initialize dropdowns if not already populated
+    populateStateDropdown();
+  }
+
+  if (mode === "connections") {
+    document.getElementById("connections-ui").style.display = "block";
+    document.getElementById("connections-controls").style.display = "block";
+  }
+}
 
 
 // ------ ROUTE DETAIL MODE ------
@@ -544,7 +576,115 @@ function loadRoute() {
   addKmlForRoute(route);
 }
 
+
 // ------ COUNTY FOCUS MODE ------
+
+
+// Populate the State dropdown using CountyCentroids
+function populateStateDropdown() {
+  const stateSelect = document.getElementById("stateSelect");
+  stateSelect.innerHTML = '<option value="">-- Choose a State --</option>';
+
+  // Unique states from CountyCentroids
+  const states = [...new Set(CountyCentroids.map(c => c.STUSPS))].sort();
+
+  states.forEach(st => {
+    const opt = document.createElement("option");
+    opt.value = st;
+    opt.textContent = st;
+    stateSelect.appendChild(opt);
+  });
+
+  // Hook up listener for state change
+  stateSelect.addEventListener("change", () => {
+    const st = stateSelect.value;
+    populateCountyDropdown(st);
+  });
+}
+
+// Populate the County dropdown based on chosen state
+function populateCountyDropdown(state) {
+  const countySelect = document.getElementById("countySelect");
+  countySelect.innerHTML = '<option value="">-- Choose a County --</option>';
+
+  if (!state) {
+    countySelect.disabled = true;
+    return;
+  }
+
+  const counties = CountyCentroids
+    .filter(c => c.STUSPS === state)
+    .map(c => c.NAME)
+    .sort();
+
+  counties.forEach(name => {
+    const opt = document.createElement("option");
+    opt.value = name;
+    opt.textContent = name;
+    countySelect.appendChild(opt);
+  });
+
+  countySelect.disabled = false;
+
+  // Hook up listener for county change
+  countySelect.addEventListener("change", () => {
+    const county = countySelect.value;
+    if (county) {
+      handleCountySelection(state, county);
+    }
+  });
+}
+
+// getRoutesForCounty finds all unique routes that touch a given county
+function getRoutesForCounty(county, state) {
+  if (!county || !state) return [];
+  
+  return [...new Set(
+    routeData
+      .filter(d => d.County === county && d.State === state)
+      .map(d => d.Route)
+  )].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+}
+
+// loadCountyFocus creates the list of routes for this county
+function loadCountyFocus(county, state) {
+  const routes = getRoutesForCounty(county, state);
+
+  // Show in a panel
+  const panel = document.getElementById("county-focus-ui");
+  panel.innerHTML = `
+    <h2>${county}, ${state}</h2>
+    <p>Routes through this county:</p>
+    <ul>
+      ${routes.map(r => `<li><a href="#" onclick="jumpToRoute('${r}')">${r}</a></li>`).join("")}
+    </ul>
+    <div id="map-county"></div>
+  `;
+
+  // TODO: zoom map to county polygon or centroid here
+}
+
+// jumpToRoute is our bridge to display the individual routes, using loadRoute from RouteDetail mode
+function jumpToRoute(route) {
+  setMode("route");
+  document.getElementById("routeSelect").value = route;
+  loadRoute();
+}
+
+// handleCountySelection is the set of actions for this mode
+function handleCountySelection(state, county) {
+  const cc = CountyCentroids.find(c => c.STUSPS === state && c.NAME === county);
+  if (!cc || !leafletMap) return;
+
+  const lat = Number(cc.INTPTLAT);
+  const lon = Number(cc.INTPTLON);
+  if (Number.isFinite(lat) && Number.isFinite(lon)) {
+    leafletMap.setView([lat, lon], 9);
+  }
+
+  loadCountyFocus(county, state)
+  
+}
 
 
 // ------ CONNECTIONS MODE ------
@@ -574,6 +714,7 @@ document.addEventListener("DOMContentLoaded", () => {
               CountyCentroids = cent;
 
               initMap(); // <-- set up Leaflet once
+              populateStateDropdown();
 
               window.addEventListener("resize", () => {
                 if (leafletMap) leafletMap.invalidateSize();
