@@ -72,6 +72,7 @@ button:hover {
 
 .roster-table .rownum { text-align:right; width:4ch; color:#666; }
 .roster-table tr.vital .county { color:#b91c1c; font-weight:600; } /* red county name */
+.roster-table tr.pres .county  { color:#007700; font-weight:600; } /* green county name */
 
 .roster-scroll {
   overflow-x: auto;   /* enable horizontal scrolling */
@@ -100,7 +101,7 @@ button:hover {
 }
 
 #controls {
-  margin-top: 10px;   /* give some breathing space */
+  margin-top: 50px;   /* give some breathing space */
 }
 
 #route-detail-controls {
@@ -118,6 +119,7 @@ button:hover {
 
 #mapPanel { height: 400px; }
 .leaflet-container { font: inherit; }
+.right-col #mapPanel { height: 400px; }.
 
 #roster {
   margin-top: 20px;
@@ -130,7 +132,7 @@ button:hover {
 }
 
 /* Mobile: stack everything */
-.left-col, .right-col, .grid-roster { grid-area: auto; }
+.grid-top, .left-col, .right-col, .grid-roster { grid-area: auto; }
 
 /* Desktop: two columns, roster full width below */
 @media (min-width: 900px) {
@@ -141,6 +143,7 @@ button:hover {
       "roster roster";
     align-items: start;
   }
+
   .left-col  { grid-area: left; }
   .right-col { grid-area: map; }
   .grid-roster { grid-area: roster; }
@@ -155,3 +158,12 @@ button:hover {
 
 /* tidy spacing in left column */
 .left-col .section { margin-bottom: 16px; }
+
+.right-col #mapPanel { height: 400px; }.
+
+
+#mapPanel {
+  height: 400px;
+  width: 100%;
+  margin-top: 10px; /* optional for spacing */
+}
