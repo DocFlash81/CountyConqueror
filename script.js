@@ -23,6 +23,8 @@ let lastCounty = null;
 let lastState = null;
 let lastState1 = null;
 let lastState2 = null;
+let currentMode = "route"; // default to Route Detail
+
 
 const routePolyCache = new Map();
 
@@ -181,7 +183,7 @@ async function addKmlFromUrl(url, opts = {}) {
   const { silent = false, noClear = false, noZoom = false, routeName = "" } = opts;
   try {
     if (!leafletMap) return false;
-    clearKmlLayer();  // <-- ensures old outline goes away
+    // clearKmlLayer();  // <-- ensures old outline goes away
 
     const resp = await fetch(url, { mode: 'cors' });
     if (!resp.ok) throw new Error(`Fetch failed (${resp.status})`);
@@ -244,7 +246,7 @@ async function addKmlFromUrl(url, opts = {}) {
   } catch (e) {
     console.error("KML load error:", e);
     if (!silent) alert("Could not load KML:\n" + e.message);
-    clearKmlLayer();
+    // clearKmlLayer();
     return false;
   }
 }
@@ -263,11 +265,11 @@ async function addKmlForRoute(route) {
     const ok = await addKmlFromUrl(base + f, { silent: true, routeName: route });
     if (ok) return true;
   }
-  clearKmlLayer();
+  // We moved this to loadRoute   clearKmlLayer();
   return false;
 }
 
-// addKmlForRoute is for County Focus mode: clears old layers
+// addKmlForRouteNoClear is for County Focus mode: clears old layers, no zoom
 async function addKmlForRouteNoClear(route) {
   if (!route) return;
   const base = "https://raw.githubusercontent.com/DocFlash81/cc-data/refs/heads/main/kml/";
@@ -339,6 +341,7 @@ async function addKmlForRouteNoClear(route) {
 
 // applyZoomStyles applies the styles to the KML and polygons when we zoom
 function applyZoomStyles() {
+  if (currentMode !== "route") return; // Bail if not RD mode
   const z = leafletMap.getZoom();
 
   // KML line weights
@@ -366,12 +369,6 @@ function applyZoomStyles() {
 async function plotRosterPolygons(route, roster) {
   if (!leafletMap) return;
 
-  // remove prior polygons
-  if (routePolyLayer) {
-    leafletMap.removeLayer(routePolyLayer);
-    routePolyLayer = null;
-  }
-
   // fetch per‑route GeoJSON from your repo
   const url = `https://raw.githubusercontent.com/DocFlash81/cc-data/refs/heads/main/kml/polygons/${route}.geojson`;
 
@@ -397,9 +394,9 @@ async function plotRosterPolygons(route, roster) {
         const name = f.properties?.NAME ?? "";
         const st = f.properties?.STUSPS ?? "";
         const isVital = currentVitalKeys.has(`${name}|${st}`);
-        const isPres = currentPresKeys.has(`${name}|${ st }`);
+        const isPres = currentPresKeys.has(`${name}|${st}`);
         return {
-          color: isVital ? "#7f1d1d" : ( isPres ? "#006600" : "#4b5563" ), // border
+          color: isVital ? "#7f1d1d" : (isPres ? "#006600" : "#4b5563"), // border
           weight: leafletMap.getZoom() >= 9 ? 1.2 : 0.8,
           fillColor: isVital ? "#ef4444" : (isPres ? "#00CC00" : "#3d8bfd"),// fill
           fillOpacity: leafletMap.getZoom() >= 8 ? 0.28 : 0.20
@@ -408,12 +405,20 @@ async function plotRosterPolygons(route, roster) {
       onEachFeature: (f, layer) => {
         const name = f.properties?.NAME ?? "";
         const st = f.properties?.STUSPS ?? "";
-        const r = roster?.find(x => `${ x.County }|${ x.State }` === `${ name }|${ st }`);
+        const r = roster?.find(x => `${x.County}|${x.State}` === `${name}|${st}`);
         const miles = r ? Number(r.Miles).toFixed(1) : "";
+
+        // TODO: For counties with reentries, show the *summed* miles
+        // across all segments instead of just the single row mileage, when hovering.
+        // Requires aggregating roster miles by County|State before binding.
+
         layer.bindTooltip(
-          `${ name }, ${ st }${ miles? ` — ${miles} mi` : ""}`,
+          `${name}, ${st}${miles ? ` — ${miles} mi` : ""}`,
           { sticky: true }
         );
+
+        // TODO: Make county polygons clickable. On click, jump into
+        // County Focus mode for that county (like handleCountySelection).
       }
     }).addTo(leafletMap);
 
@@ -435,6 +440,8 @@ async function plotRosterPolygons(route, roster) {
 
 
 function setMode(mode) {
+  currentMode = mode; // track current mode globally
+
   // Hide everything first
   ["route-detail-ui", "county-focus-ui", "connections-ui",
     "route-detail-controls", "county-focus-controls", "connections-controls"]
@@ -464,9 +471,21 @@ function setupRouteDetailControls() {
   });
   document.getElementById("lumpChk").addEventListener("change", (e) => {
     lumpMode = e.target.checked ? 1 : 0;
+
+    const route = document.getElementById("routeSelect").value;
+    const triplist = computeTriplist(route, currentDirection);
+    console.log("Triplist BEFORE lumping:", triplist);
+
+    const afterTouch = applyTouch(triplist, touchMode);
+    console.log("After Touch:", afterTouch);
+
+    const afterLump = applyLump(afterTouch, lumpMode);
+    console.log("After Lump:", afterLump);
+
     updateRouteDetailControlsUI();
     loadRoute();
   });
+
 }
 
 // updateRouteDetailControlsUI resets to the new settings
@@ -554,7 +573,7 @@ function applyTouch(triplist, touch = 0) {
   const grouped = new Map();
   for (const d of triplist) {
     const sliver = d.SliverID ? d.SliverID.slice(1, 4) : "";
-    const groupKey = sliver ? String(parseInt(sliver)) : `${ d.County } | ${ d.State }`;
+    const groupKey = sliver ? String(parseInt(sliver)) : `${d.County} | ${d.State}`;
     const g = grouped.get(groupKey);
     if (!g) {
       grouped.set(groupKey, { ...d });
@@ -570,28 +589,39 @@ function applyTouch(triplist, touch = 0) {
 // applyLump collapses all independent cities into parent; key = LumpID else unique row
 function applyLump(df1, lump = 0) {
   if (!lump) return df1;
-  // Build group key that cannot collide with LumpID
+
   const groups = new Map();
+  let sawLumps = false;
+
   for (const d of df1) {
-    const key = d.LumpID !== 0 ? `LUMP_${ d.LumpID }` : `ROW_${ d.Row }`;
-    const g = groups.get(key);
-    if (!g) {
-      groups.set(key, { ...d });
+    if (d.LumpID && d.LumpID !== 0) {
+      sawLumps = true;
+      const key = `LUMP_${d.LumpID}`;
+      const g = groups.get(key);
+      if (!g) {
+        groups.set(key, { ...d });
+      } else {
+        g.Miles += toNum(d.Miles);
+      }
     } else {
-      g.Miles += toNum(d.Miles);
+      groups.set(`ROW_${d.Row}`, { ...d });
     }
   }
-  // Now collapse to county level if multiple groups map to same county/state
+
+  if (!sawLumps) {
+    // ✅ no independent cities — return rows grouped only by RowID
+    return Array.from(groups.values());
+  }
+
+  // otherwise collapse independent cities to counties
   const byCounty = new Map();
   for (const g of groups.values()) {
-    const k = `${ g.County } | ${ g.State }`;
+    const k = `${g.County} | ${g.State}`;
     const x = byCounty.get(k);
     if (!x) {
-      // choose Parent==1 rep like in R
       byCounty.set(k, { ...g });
     } else {
       x.Miles += toNum(g.Miles);
-      // keep first Vital/Pres/Notes like your R summarise
     }
   }
   return Array.from(byCounty.values());
@@ -644,6 +674,11 @@ function buildRoster(route, { direction = 0, touch = 0, lump = 0 } = {}) {
   const triplist = computeTriplist(route, direction);  // df1 base
   const afterTouch = applyTouch(triplist, touch);      // apply reentry collapse if touch==1
   const afterLump = applyLump(afterTouch, lump);      // then lump ind. cities if lump==1
+
+  console.log("Triplist:", triplist);
+  console.log("After Touch:", afterTouch);
+  console.log("After Lump:", afterLump);
+
   return afterLump;
 }
 
@@ -652,7 +687,7 @@ function plotRosterOnMap(roster) {
   if (!leafletMap || !markersLayer) return;
   markersLayer.clearLayers();
   countyRouteLayers.clearLayers();
-  clearKmlLayer();
+  // clearKmlLayer();
 
   const pts = [];
   roster.forEach(r => {
@@ -670,7 +705,7 @@ function plotRosterOnMap(roster) {
 
     const strokeColor = isVital ? "#b91c1c" : (isPres ? "#006600" : "#2563eb");
     const fillColor = isVital ? "#ef4444" : (isPres ? "#007700" : "#60A5FA");
-    
+
     const marker = L.circleMarker([lat, lon], {
       radius: 5,
       weight: 1,
@@ -678,9 +713,9 @@ function plotRosterOnMap(roster) {
       fillColor: fillColor,
       fillOpacity: 0.85
     });
-    
-    marker.bindTooltip(`${ r.County }, ${ r.State } — ${ toNum(r.Miles).toFixed(1)
-  } mi`, { sticky: true });
+
+    marker.bindTooltip(`${r.County}, ${r.State} — ${toNum(r.Miles).toFixed(1)
+      } mi`, { sticky: true });
     marker.addTo(markersLayer);
     pts.push([lat, lon]);
   });
@@ -701,7 +736,7 @@ function enterRouteDetailMode(selectedRoute = null) {
   }
 
   // clear RD leftovers
-  clearKmlLayer();
+  // clearKmlLayer();
   markersLayer.clearLayers();
   if (routePolyLayer) {
     leafletMap.removeLayer(routePolyLayer);
@@ -734,6 +769,15 @@ function loadRoute() {
 
   updateRouteDetailControlsUI();
 
+  // Here is the place to clear RD layers
+  clearKmlLayer();
+  markersLayer.clearLayers();
+  countyRouteLayers.clearLayers(); // safety, but they should already be cleared
+  if (routePolyLayer) {
+    leafletMap.removeLayer(routePolyLayer);
+    routePolyLayer = null;
+  }
+
   // Build roster (touch = collapse reentries, lump = merge ind. cities)
   const roster = buildRoster(route, {
     direction: currentDirection,
@@ -742,28 +786,28 @@ function loadRoute() {
   });
 
   currentVitalKeys = new Set(
-    roster.filter(r => toNum(r.Vital) === 1).map(r => `${ r.County }|${ r.State }`)
+    roster.filter(r => toNum(r.Vital) === 1).map(r => `${r.County}|${r.State}`)
   );
 
   currentPresKeys = new Set(
-    roster.filter(r => toNum(r.Pres) === 1).map(r => `${ r.County }|${ r.State }`)
+    roster.filter(r => toNum(r.Pres) === 1).map(r => `${r.County}|${r.State}`)
   );
 
   // Totals for Vital/Pres
   const vitalSet = new Set(
-  roster.filter(r => toNum(r.Vital) === 1)
-        .map(r => `${r.County}|${r.State}`)
+    roster.filter(r => toNum(r.Vital) === 1)
+      .map(r => `${r.County}|${r.State}`)
   );
   const presSet = new Set(
     roster.filter(r => toNum(r.Pres) === 1)
-        .map(r => `${r.County}|${r.State}`)
+      .map(r => `${r.County}|${r.State}`)
   );
 
-currentVitalKeys = vitalSet;
-currentPresKeys  = presSet;
+  currentVitalKeys = vitalSet;
+  currentPresKeys = presSet;
 
-const vitalCount = vitalSet.size;
-const presCount  = presSet.size;
+  const vitalCount = vitalSet.size;
+  const presCount = presSet.size;
 
   // Summary panel text
   const summary = routeInfo.find(d => d.Route === route);
@@ -773,209 +817,384 @@ const presCount  = presSet.size;
   });
 
   let summaryText = summary
-    ? `Route ${ route } runs ${ milesStr } miles across ${ summary.States } states and ${ summary.Counties } counties.`
+    ? `Route ${route} runs ${milesStr} miles across ${summary.States} states and ${summary.Counties} counties.`
     + `<br><br>Type: ${summary.Type}, Direction: ${summary.Direction}`
-      : `Summary not available for ${route}.`;
+    : `Summary not available for ${route}.`;
 
-      summaryText += `<br><br>
+  // Lookup extra facts
+  //if (routeFacts[route]) {
+  //  summaryText += `<br><br><em>${routeFacts[route].fact}</em>`;
+  //}
+
+  // TODO: load extra facts from routeFacts.json and append here.
+  // Include # of segments, average by segment, etc. Also, summarize mileage by state.
+
+
+  summaryText += `<br><br>
         <span style="color:#b91c1c; font-weight:bold;">Vital counties: ${vitalCount}</span>,
         <span style="color:#007700; font-weight:bold;">Presidential counties: ${presCount}</span>`;
 
-        document.getElementById("ifactsPanel").innerHTML = summaryText;
+  document.getElementById("ifactsPanel").innerHTML = summaryText;
 
 
-        // Render roster panel
-        renderRoster(roster);
-        //plotRosterOnMap(roster);
-        plotRosterPolygons(route, roster);
-        addKmlForRoute(route);
+  // Render roster panel
+  renderRoster(roster);
+  //plotRosterOnMap(roster);
+  plotRosterPolygons(route, roster);
+  addKmlForRoute(route);
 }
 
 
-        // ------ COUNTY FOCUS MODE ------
+// ------ COUNTY FOCUS MODE ------
 
 
-        // Populate the State dropdown using CountyCentroids
-        function populateStateDropdown() {
+// enterCountyFocusMode sets up the County Focus mode
+function enterCountyFocusMode() {
+
+  // clear RD overlays
+  clearKmlLayer();
+  markersLayer.clearLayers();
+  if (routePolyLayer) {
+    leafletMap.removeLayer(routePolyLayer);
+    routePolyLayer = null;
+  }
+
+  document.getElementById("rosterPanel").innerHTML =
+    "<p style='color:#666;font-style:italic;'>Roster not available in County Focus Mode.</p>";
+
+  // show UI
+  document.getElementById("county-focus-ui").style.display = "block";
+  document.getElementById("county-focus-controls").style.display = "block";
+  document.getElementById("mapPanel").style.display = "block";
+
+  populateStateDropdown();
+
+  if (lastState && lastCounty) {
+    document.getElementById("stateSelect").value = lastState;
+    populateCountyDropdown(lastState);
+    document.getElementById("countySelect").value = lastCounty;
+    handleCountySelection(lastState, lastCounty);
+  }
+}
+
+// Populate the State dropdown using CountyCentroids
+function populateStateDropdown() {
   const stateSelect = document.getElementById("stateSelect");
-        stateSelect.innerHTML = '<option value="">-- Choose a State --</option>';
+  stateSelect.innerHTML = '<option value="">-- Choose a State --</option>';
 
   // Unique states from CountyCentroids
   const states = [...new Set(CountyCentroids.map(c => c.STUSPS))].sort();
 
   states.forEach(st => {
     const opt = document.createElement("option");
-        opt.value = st;
-        opt.textContent = st;
-        stateSelect.appendChild(opt);
+    opt.value = st;
+    opt.textContent = st;
+    stateSelect.appendChild(opt);
   });
 
   // Hook up listener for state change
   stateSelect.addEventListener("change", () => {
     const st = stateSelect.value;
-        populateCountyDropdown(st);
+    populateCountyDropdown(st);
   });
 }
 
-        // Populate the County dropdown based on chosen state
-        function populateCountyDropdown(state) {
+// Populate the County dropdown based on chosen state
+function populateCountyDropdown(state) {
   const countySelect = document.getElementById("countySelect");
-        countySelect.innerHTML = '<option value="">-- Choose a County --</option>';
+  countySelect.innerHTML = '<option value="">-- Choose a County --</option>';
 
-        if (!state) {
-          countySelect.disabled = true;
-        return;
+  if (!state) {
+    countySelect.disabled = true;
+    return;
   }
 
-        const counties = CountyCentroids
+  const counties = CountyCentroids
     .filter(c => c.STUSPS === state)
     .map(c => c.NAME)
-        .sort();
+    .sort();
 
   counties.forEach(name => {
     const opt = document.createElement("option");
-        opt.value = name;
-        opt.textContent = name;
-        countySelect.appendChild(opt);
+    opt.value = name;
+    opt.textContent = name;
+    countySelect.appendChild(opt);
   });
 
-        countySelect.disabled = false;
+  countySelect.disabled = false;
 
   // Hook up listener for county change
   countySelect.addEventListener("change", () => {
     const county = countySelect.value;
-        if (county) {
-          handleCountySelection(state, county);
+    if (county) {
+      handleCountySelection(state, county);
     }
   });
 }
 
-        // getRoutesForCounty finds all unique routes that touch a given county
-        function getRoutesForCounty(county, state) {
+// getRoutesForCounty finds all unique routes that touch a given county
+function getRoutesForCounty(county, state) {
   if (!county || !state) return [];
 
-        return [...new Set(
-        routeData
+  return [...new Set(
+    routeData
       .filter(d => d.County === county && d.State === state)
       .map(d => d.Route)
-  )].sort((a, b) => a.localeCompare(b, undefined, {numeric: true }));
+  )].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
 }
 
-        // loadCountyFocus creates the list of routes for this county
-        function loadCountyFocus(county, state) {
-          document.getElementById("cfTitle").innerText = `${county}, ${state}`;
-        const routes = getRoutesForCounty(county, state);
-        console.log("Routes found:", routes, "cfRouteList before:", document.getElementById("cfRouteList").innerHTML);
+// loadCountyFocus creates the list of routes for this county
+function loadCountyFocus(county, state) {
+  document.getElementById("cfTitle").innerText = `${county}, ${state}`;
+  const routes = getRoutesForCounty(county, state);
+  console.log("Routes found:", routes, "cfRouteList before:", document.getElementById("cfRouteList").innerHTML);
 
-        const listHtml = `
+  const listHtml = `
         <p>Routes through this county:</p>
         <ul>
           ${routes.map(r => `<li><a href="#" onclick="jumpToRoute('${r}')">${r}</a></li>`).join("")}
         </ul>`;
 
-       document.getElementById("cfRouteList").innerHTML = listHtml;
+  document.getElementById("cfRouteList").innerHTML = listHtml;
 }
 
-        // jumpToRoute is our bridge to display the individual routes, using loadRoute from RouteDetail mode
-        function jumpToRoute(route) {
-          setMode("route");
-        document.getElementById("routeSelect").value = route;
-        loadRoute();
+// jumpToRoute is our bridge to display the individual routes, using loadRoute from RouteDetail mode
+function jumpToRoute(route) {
+  lastRoute = null;
+  setMode("route");
+  document.getElementById("routeSelect").value = route;
+  loadRoute();
 }
 
-        // enterCountyFocusMode sets up the County Focus mode
-        function enterCountyFocusMode() {
-          // clear RD overlays
-          clearKmlLayer();
-        markersLayer.clearLayers();
-        if (routePolyLayer) {
-          leafletMap.removeLayer(routePolyLayer);
-        routePolyLayer = null;
-  }
-
-        document.getElementById("rosterPanel").innerHTML =
-        "<p style='color:#666;font-style:italic;'>Roster not available in County Focus Mode.</p>";
-
-        // show UI
-        document.getElementById("county-focus-ui").style.display = "block";
-        document.getElementById("county-focus-controls").style.display = "block";
-        document.getElementById("mapPanel").style.display = "block";
-
-        populateStateDropdown();
-
-        if (lastState && lastCounty) {
-          document.getElementById("stateSelect").value = lastState;
-        populateCountyDropdown(lastState);
-        document.getElementById("countySelect").value = lastCounty;
-        handleCountySelection(lastState, lastCounty);
-  }
-}
-
-        // handleCountySelection does the actions for County Focus mode
-        async function handleCountySelection(state, county) {
-          console.log("handleCountySelection called with:", state, county);
-        lastState = state;
-        lastCounty = county;
-        countyRouteLayers.clearLayers();
+// handleCountySelection does the actions for County Focus mode
+async function handleCountySelection(state, county) {
+  console.log("handleCountySelection called with:", state, county);
+  lastState = state;
+  lastCounty = county;
+  countyRouteLayers.clearLayers();
   const cc = CountyCentroids.find(c => c.STUSPS === state && c.NAME === county);
-        console.log("Centroid match:", cc);
-        if (!cc || !leafletMap) {
-          console.warn("No centroid match or map not ready");
-        return;
+  console.log("Centroid match:", cc);
+  if (!cc || !leafletMap) {
+    console.warn("No centroid match or map not ready");
+    return;
   }
 
-        const lat = Number(cc.INTPTLAT);
-        const lon = Number(cc.INTPTLON);
-        if (Number.isFinite(lat) && Number.isFinite(lon)) {
-          leafletMap.setView([lat, lon], 9);
+  const lat = Number(cc.INTPTLAT);
+  const lon = Number(cc.INTPTLON);
+  if (Number.isFinite(lat) && Number.isFinite(lon)) {
+    leafletMap.setView([lat, lon], 9);
   }
 
-        if (!countyPolygons) return;
+  if (!countyPolygons) return;
 
-        const fips = stateToFips[state];
-        console.log("Looking for county", state, county, "with FIPS", fips);
-        const match = countyPolygons.features.find(
+  const fips = stateToFips[state];
+  console.log("Looking for county", state, county, "with FIPS", fips);
+  const match = countyPolygons.features.find(
     f => f.properties.STATEFP === fips && f.properties.NAME === county
-        );
+  );
 
-        console.log("Polygon match:", match);
+  console.log("Polygon match:", match);
 
-        if (match) {
+  if (match) {
     if (window.countyLayer) leafletMap.removeLayer(window.countyLayer);
-        window.countyLayer = L.geoJSON(match, {
-          style: {color: "blue", weight: 2, fillOpacity: 0.2 }
+    window.countyLayer = L.geoJSON(match, {
+      style: { color: "blue", weight: 2, fillOpacity: 0.2 }
     }).addTo(leafletMap);
-        leafletMap.fitBounds(window.countyLayer.getBounds());
+    leafletMap.fitBounds(window.countyLayer.getBounds());
+
+    // TODO: If this county is "vital" (only 1 route passes), change its color
+    // to red here. Also show a note: "This county is *vital* to that route."
+    // If 0 routes, note it's off the US/Interstate grid.
+
   } else {
-          console.warn("No polygon match for", county, state);
+    console.warn("No polygon match for", county, state);
   }
 
-        // Update the route list panel
-        loadCountyFocus(county, state);
+  // Update the route list panel
+  loadCountyFocus(county, state);
 
-        // === Add KMLs for *all* routes in this county ===
-        const routes = getRoutesForCounty(county, state);
-        console.log("Adding KMLs for routes:", routes);
 
-        for (const r of routes) {
-          addKmlForRouteNoClear(r);
+  // TODO: Optionally add a "County Facts" panel here.
+  // Could include population, pronunciation guide, history, etc.
+  // Might pull from an external dataset or static JSON.
+
+  // === Add KMLs for *all* routes in this county ===
+  const routes = getRoutesForCounty(county, state);
+  console.log("Adding KMLs for routes:", routes);
+
+  for (const r of routes) {
+    addKmlForRouteNoClear(r);
   }
 }
 
 
-        // ------ CONNECTIONS MODE ------
+// ------ CONNECTIONS MODE ------
 
 
-        // enterConnectionsMode sets up Connection mode
-        function enterConnectionsMode() {
-          // clear both RD + CF layers
-          clearKmlLayer();
-        countyRouteLayers.clearLayers();
-        markersLayer.clearLayers();
+// enterConnectionsMode sets up Connection mode
+function enterConnectionsMode() {
+  // clear both RD + CF layers
+  clearKmlLayer();
+  countyRouteLayers.clearLayers();
+  markersLayer.clearLayers();
 
-        // show UI
-        document.getElementById("connections-ui").style.display = "block";
-        document.getElementById("connections-controls").style.display = "block";
+  // show only Connections UI
+  document.getElementById("connections-ui").style.display = "block";
+  document.getElementById("connections-controls").style.display = "block";
+  document.getElementById("mapPanel").style.display = "block";
+
+  // clear roster panel
+  document.getElementById("rosterPanel").innerHTML =
+    "<p style='color:#666;font-style:italic;'>Roster not available in Connections Mode.</p>";
+
+  populateState1Dropdown();
+}
+
+// Populate the first State dropdown
+function populateState1Dropdown() {
+  const state1Select = document.getElementById("state1Select");
+  state1Select.innerHTML = '<option value="">-- Choose a State --</option>';
+
+  const states = [...new Set(CountyCentroids.map(c => c.STUSPS))].sort();
+
+  states.forEach(st => {
+    const opt = document.createElement("option");
+    opt.value = st;
+    opt.textContent = st;
+    state1Select.appendChild(opt);
+  });
+
+  state1Select.addEventListener("change", () => {
+    const st = state1Select.value;
+    populateNextDropdown(st);
+  });
+}
+
+// Populate the second State dropdown (exclude the first choice)
+function populateNextDropdown(state) {
+  const state2Select = document.getElementById("state2Select");
+  state2Select.innerHTML = '<option value="">-- Choose a State --</option>';
+
+  if (!state) {
+    state2Select.disabled = true;
+    return;
+  }
+
+  const states = [...new Set(CountyCentroids.map(c => c.STUSPS))]
+    .filter(s => s !== state)
+    .sort();
+
+  states.forEach(st => {
+    const opt = document.createElement("option");
+    opt.value = st;
+    opt.textContent = st;
+    state2Select.appendChild(opt);
+  });
+
+  state2Select.disabled = false;
+
+  state2Select.addEventListener("change", () => {
+    const state2 = state2Select.value;
+    if (state2) {
+      handleSelections(state, state2);
+    }
+  });
+}
+
+function getRoutesForStates(state1, state2) {
+  if (!state1 || !state2) return [];
+
+  const routesInState1 = new Set(
+    routeData.filter(d => d.State === state1).map(d => d.Route)
+  );
+  const routesInState2 = new Set(
+    routeData.filter(d => d.State === state2).map(d => d.Route)
+  );
+
+  // Intersection of the two sets
+  const connectingRoutes = [...routesInState1].filter(r => routesInState2.has(r));
+
+  return connectingRoutes.sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+}
+
+// zoomToStates zooms the map to fit the two states
+function zoomToStates(state1, state2) {
+  if (!countyPolygons || !leafletMap) return;
+
+  const fips1 = stateToFips[state1];
+  const fips2 = stateToFips[state2];
+
+  const matches = countyPolygons.features.filter(
+    f => f.properties.STATEFP === fips1 || f.properties.STATEFP === fips2
+  );
+
+  if (matches.length) {
+    const layer = L.geoJSON(matches);
+    leafletMap.fitBounds(layer.getBounds().pad(0.2));
+  }
+}
+
+// loadConnections creates the list of routes connecting these states
+function loadConnections(state1, state2) {
+  document.getElementById("connectionsTitle").innerText =
+    `Routes from ${state1} to ${state2}:`;
+
+  const routes = getRoutesForStates(state1, state2);
+
+  const listHtml = `
+    <p>Routes between these states:</p>
+    <ul>
+      ${routes.map(r => `<li><a href="#" onclick="jumpToRoute('${r}')">${r}</a></li>`).join("")}
+    </ul>`;
+
+  document.getElementById("connectionsList").innerHTML = listHtml;
+}
+
+// handleSelections does the actions for Connections mode
+async function handleSelections(state1, state2) {
+  console.log("handleSelections called with:", state1, state2);
+  lastState1 = state1;
+  lastState2 = state2;
+  countyRouteLayers.clearLayers();
+
+  // update route list panel
+  loadConnections(state1, state2);
+
+  // zoom to both states
+  zoomToStates(state1, state2);
+
+  // Highlight the two selected states
+  if (routePolyLayer) {
+    leafletMap.removeLayer(routePolyLayer);
+    routePolyLayer = null;
+  }
+
+  const selectedStates = [state1, state2];
+
+  console.log("Drawing state polygons for:", state1, state2, countyPolygons);
+
+  const selectedFips = [stateToFips[state1], stateToFips[state2]];
+
+  routePolyLayer = L.geoJSON(countyPolygons, {
+    filter: f => {
+      const match = selectedFips.includes(f.properties.STATEFP);
+      if (match) console.log("Matched polygon:", f.properties.NAME, f.properties.STATEFP);
+      return match;
+    },
+    style: {
+      color: "#ff9900",
+      weight: 0,
+      fillColor: "#ff9900",
+      fillOpacity: 0.2
+    }
+  }).addTo(leafletMap);
+
+
+  // add KMLs for all connecting routes
+  const routes = getRoutesForStates(state1, state2);
+  for (const r of routes) {
+    addKmlForRouteNoClear(r);
+  }
 }
 
 
@@ -985,64 +1204,68 @@ const presCount  = presSet.size;
 document.addEventListener("DOMContentLoaded", () => {
   const nocache = `?v=${Date.now()}`;
 
-        // 1) Load route-county rows
-        parseCsv(
-        "https://raw.githubusercontent.com/DocFlash81/cc-data/refs/heads/main/MasterRouteCountyList.csv" + nocache,
+  // 1) Load route-county rows
+  parseCsv(
+    "https://raw.githubusercontent.com/DocFlash81/cc-data/refs/heads/main/MasterRouteCountyList.csv" + nocache,
     (data) => {
-          routeData = data;
+      routeData = data;
 
-        // 2) Load RouteInfo
-        parseCsv(
+      // 2) Load RouteInfo
+      parseCsv(
         "https://raw.githubusercontent.com/DocFlash81/cc-data/refs/heads/main/RouteInfo.csv" + nocache,
         (data2) => {
           routeInfo = data2;
 
-        // 3) Load county centroids
-        parseCsv(
-        "https://raw.githubusercontent.com/DocFlash81/cc-data/refs/heads/main/CountyCentroids.csv" + nocache,
+          // 3) Load county centroids
+          parseCsv(
+            "https://raw.githubusercontent.com/DocFlash81/cc-data/refs/heads/main/CountyCentroids.csv" + nocache,
             (cent) => {
-          CountyCentroids = cent;
+              CountyCentroids = cent;
 
-        // 4) Load county polygons, for County Focus mode
+              // 4) Load county polygons, for County Focus mode
 
-        // Load the simplified county polygons
-        fetch("https://raw.githubusercontent.com/DocFlash81/cc-data/refs/heads/main/CountyPolygons.json")
+              // Load the simplified county polygons
+              fetch("https://raw.githubusercontent.com/DocFlash81/cc-data/refs/heads/main/CountyPolygons.json")
                 .then(res => res.json())
                 .then(data => {
-          countyPolygons = data;
-        console.log("County polygons loaded:", countyPolygons);
+                  countyPolygons = data;
+                  console.log("County polygons loaded:", countyPolygons);
                 })
                 .catch(err => console.error("Failed to load county polygons:", err));
 
 
-        initMap(); // <-- set up Leaflet once
-        populateStateDropdown();
+              initMap(); // <-- set up Leaflet once
 
+              // We populate the dropdowns now, though we don't need them until the particular mode is called.
+              populateStateDropdown();
+              populateRouteDropdown();
+
+              // This listener is for resizing, so we don't have stale and odd-looking partial maps on zooms
               window.addEventListener("resize", () => {
                 if (leafletMap) leafletMap.invalidateSize();
               });
 
-        setupRouteDetailControls();
+              // We default to RD mode, so these controls are wired up now
+              setupRouteDetailControls();
 
-        document
-        .getElementById("routeSelect")
+              // This fires when a route changes; we need to manage clearings correctly
+              document
+                .getElementById("routeSelect")
                 .addEventListener("change", () => {
-          loadRoute();
-        const mapEl = document.getElementById("mapPanel");
-        if (mapEl)
-        if (mode === "county") {
-          mapEl.scrollIntoView({
-            behavior: "smooth",
-            block: "start",
-          });
+                  loadRoute();
+                  const mapEl = document.getElementById("mapPanel");
+                  if (mapEl)
+                    if (currentMode === "county") {
+                      mapEl.scrollIntoView({
+                        behavior: "smooth",
+                        block: "start",
+                      });
                     }
                 });
-
-        populateRouteDropdown();
             }
-        );
+          );
         }
-        );
+      );
     }
-        );
+  );
 });

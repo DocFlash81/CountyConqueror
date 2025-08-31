@@ -4,11 +4,11 @@
 <head>
   <meta charset="UTF-8" /> <!-- Most common character set -->
   <!-- Make mobile devices honor screen width -->
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/> 
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>County Conqueror</title>
   <link rel="stylesheet" href="style.css" />
   <!-- Stylesheet and script for leaflet -->
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <!-- PapaParse helps read csv files -->
   <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
@@ -18,88 +18,112 @@
 
 <body>
 
-<!-- Mode Switcher -->
-<div id="mode-switcher">
-  <button onclick="setMode('route')">Route Detail</button>
-  <button onclick="setMode('county')">County Focus</button>
-  <button onclick="setMode('connections')">Connections</button>
-</div>
+  <!-- Mode Switcher -->
+  <div id="mode-switcher">
+    <button onclick="setMode('route')">Route Detail</button>
+    <button onclick="setMode('county')">County Focus</button>
+    <button onclick="setMode('connections')">Connections</button>
+  </div>
 
-<!-- Placeholder for Controls -->
-<div id="controls">
-  <div id="route-detail-controls" class="section">
-    <label for="routeSelect">Select a Route:</label>
-    <select id="routeSelect">
-      <option value="">-- Choose a Route --</option>
-    </select>
-  </div> <!-- End of route-detail-controls-->
+  <!-- Placeholder for Controls -->
+  <div id="controls">
+    <div id="route-detail-controls" class="section">
+      <label for="routeSelect">Select a Route:</label>
+      <select id="routeSelect">
+        <option value="">-- Choose a Route --</option>
+      </select>
+    </div> <!-- End of route-detail-controls-->
 
-  <div id="county-focus-controls" class="section" style="display:none;">
-    <label for="stateSelect">Select a State:</label>
-    <select id="stateSelect">
-      <option value="">-- Choose a State --</option>
-    </select>
+    <div id="county-focus-controls" class="section" style="display:none;">
+      <label for="stateSelect">Select a State:</label>
+      <select id="stateSelect">
+        <option value="">-- Choose a State --</option>
+      </select>
 
-    <label for="countySelect">Select a County:</label>
-    <select id="countySelect" disabled>
-      <option value="">-- Choose a County --</option>
-    </select>
-  </div> <!-- End of county-focus-controls -->
-  
-  <div id="connections-controls" class="section" style="display:none;">
-    <!-- Connections controls go here -->
-  </div> <!-- End of connections-controls -->
-</div>
+      <label for="countySelect">Select a County:</label>
+      <select id="countySelect" disabled>
+        <option value="">-- Choose a County --</option>
+      </select>
+    </div> <!-- End of county-focus-controls -->
 
-<h1>County Conqueror</h1>
- 
-<!-- Grid for all modes. Title at top. Left panel: UIs and Lists (CF, Con) -->
-<!-- Right panel: Map. Bottom panel: Roster -->
-<div class="grid">
-  <div class="left-col">
+    <div id="connections-controls" class="section" style="display:none;">
+      <label for="state1Select">Select a State:</label>
+      <select id="state1Select">
+        <option value="">-- Choose a State --</option>
+      </select>
 
-    <!-- Route Detail -->
-    <div id="route-detail-ui">
-      <h2>Route Summary</h2>
-      <div class="section" id="ifactsPanel"></div>
-      <h2>Route Controls</h2>
-      <div class="section" id="routeControls">
-        <button id="dirBtn" type="button">Direction: Forward</button>
-        <label><input type="checkbox" id="touchChk"> Remove reentries</label>
-        <label><input type="checkbox" id="lumpChk"> Collapse independent cities</label>
+      <label for="state2Select">Select another State:</label>
+      <select id="state2Select">
+        <option value="">-- Choose another State --</option>
+      </select>
+    </div> <!-- End of connections-controls -->
+  </div>
+
+  <h1>County Conqueror</h1>
+
+  <!-- Grid for all modes. Title at top. Left panel: UIs and Lists (CF, Con) -->
+  <!-- Right panel: Map. Bottom panel: Roster -->
+  <div class="grid">
+    <div class="left-col">
+
+      <!-- Route Detail -->
+      <div id="route-detail-ui">
+        <h2>Route Summary</h2>
+        <div class="section" id="ifactsPanel"></div>
+        <h2>Route Controls</h2>
+        <div class="section" id="routeControls">
+          <button id="dirBtn" type="button">Direction: Forward</button>
+          <label><input type="checkbox" id="touchChk"> Remove reentries</label>
+          <label><input type="checkbox" id="lumpChk"> Collapse independent cities</label>
+        </div>
+      </div>
+
+      <!-- County Focus -->
+      <div id="county-focus-ui" style="display:none;">
+        <h2 id="cfTitle">[County, State]</h2>
+        <div id="cfRouteList"></div>
+      </div>
+
+      <!-- Connections -->
+      <div id="connections-ui" class="section" style="display:none;">
+        <h2>Connections</h2>
+
+        <div id="connections-controls" style="display:none;">
+          <label for="state1Select">State 1:</label>
+          <select id="state1Select"></select>
+
+          <label for="state2Select">State 2:</label>
+          <select id="state2Select"></select>
+        </div>
+
+        <!-- dynamic subheading -->
+        <h3 id="connectionsTitle"></h3>
+
+        <!-- dynamic list -->
+        <div id="connectionsList"></div>
       </div>
     </div>
 
-    <!-- County Focus -->
-    <div id="county-focus-ui" style="display:none;">
-      <h2 id="cfTitle">[County, State]</h2>
-      <div id="cfRouteList"></div>
+    <div class="right-col">
+      <!-- Right-hand heading can vary per mode -->
+      <div id="route-detail-map-title">
+        <h2>Route Map</h2>
+      </div>
+      <div id="county-focus-map-title" style="display:none;">
+        <h2>County Map</h2>
+      </div>
+      <div id="mapPanel" style="height: 400px; background-color: #eee;"></div>
     </div>
 
-    <!-- Connections -->
-     <div id="connections-ui" style="display:none;">
-      <h2 id="cfTitle">[State1, State2]</h2>
-      <div id="cfRouteList"></div>
-     </div>
+    <div class="grid-roster">
+      <h2>Roster</h2>
+      <div id="rosterPanel"></div>
+    </div>
+
   </div>
 
-  
-
-  <div class="right-col">
-    <!-- Right-hand heading can vary per mode -->
-    <div id="route-detail-map-title"><h2>Route Map</h2></div>
-    <div id="county-focus-map-title" style="display:none;"><h2>County Map</h2></div>
-    <div id="mapPanel" style="height: 400px; background-color: #eee;"></div>
-  </div>
-
-  <div class="grid-roster">
-    <h2>Roster</h2>
-    <div id="rosterPanel"></div>
-  </div>
-
-</div>
-
-<script src="script.js"></script>
+  <script src="script.js"></script>
 
 </body>
+
 </html>

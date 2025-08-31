@@ -43,9 +43,11 @@ button:hover {
 
 .roster-table .num {
   text-align: right;
-  font-variant-numeric: tabular-nums;     /* align digits */
+  font-variant-numeric: tabular-nums;
+  /* align digits */
   font-feature-settings: "tnum";
-  width: 7ch;                              /* nice fixed width for numbers */
+  width: 7ch;
+  /* nice fixed width for numbers */
 }
 
 .roster-table .center {
@@ -60,9 +62,13 @@ button:hover {
   word-break: break-word;
 }
 
-.roster-table .county { width: 25%; }
+.roster-table .county {
+  width: 25%;
+}
 
-.roster-table .state  { width: 8ch; }
+.roster-table .state {
+  width: 8ch;
+}
 
 .roster-table .rownum {
   text-align: right;
@@ -70,25 +76,45 @@ button:hover {
   color: #666;
 }
 
-.roster-table .rownum { text-align:right; width:4ch; color:#666; }
-.roster-table tr.vital .county { color:#b91c1c; font-weight:600; } /* red county name */
-.roster-table tr.pres .county  { color:#007700; font-weight:600; } /* green county name */
+.roster-table .rownum {
+  text-align: right;
+  width: 4ch;
+  color: #666;
+}
+
+.roster-table tr.vital .county {
+  color: #b91c1c;
+  font-weight: 600;
+}
+
+/* red county name */
+.roster-table tr.pres .county {
+  color: #007700;
+  font-weight: 600;
+}
+
+/* green county name */
 
 .roster-scroll {
-  overflow-x: auto;   /* enable horizontal scrolling */
-  -webkit-overflow-scrolling: touch; /* smooth scrolling on iOS */
+  overflow-x: auto;
+  /* enable horizontal scrolling */
+  -webkit-overflow-scrolling: touch;
+  /* smooth scrolling on iOS */
 }
 
 .roster-table {
   table-layout: auto;
-  min-width: 600px;   /* force table to be wider than viewport */
+  min-width: 600px;
+  /* force table to be wider than viewport */
   border-collapse: collapse;
   width: 100%;
 }
 
-.roster-table th, .roster-table td {
+.roster-table th,
+.roster-table td {
   padding: 4px 8px;
-  white-space: nowrap; /* prevent notes from wrapping into tall cells */
+  white-space: nowrap;
+  /* prevent notes from wrapping into tall cells */
 }
 
 #mode-switcher {
@@ -101,27 +127,45 @@ button:hover {
 }
 
 #controls {
-  margin-top: 50px;   /* give some breathing space */
+  margin-top: 50px;
+  /* give some breathing space */
 }
 
 #route-detail-controls {
   display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+#routeControls {
+  display: flex;
+  flex-direction: column;  /* stack them vertically */
+  align-items: flex-start; /* left aligned */
+  gap: 6px;                /* space between rows */
 }
 
 #routeSelect {
   max-width: 250px;
 }
 
-#dirBtn { padding:6px 10px; }
+#dirBtn {
+  padding: 6px 10px;
+}
 
-#mapPanel { height: 400px; }
-.leaflet-container { font: inherit; }
-.right-col #mapPanel { height: 400px; }.
+#mapPanel {
+  height: 400px;
+}
 
-#roster {
+.leaflet-container {
+  font: inherit;
+}
+
+.right-col #mapPanel {
+  height: 400px;
+}
+
+. #roster {
   margin-top: 20px;
 }
 
@@ -132,21 +176,35 @@ button:hover {
 }
 
 /* Mobile: stack everything */
-.grid-top, .left-col, .right-col, .grid-roster { grid-area: auto; }
+.grid-top,
+.left-col,
+.right-col,
+.grid-roster {
+  grid-area: auto;
+}
 
 /* Desktop: two columns, roster full width below */
 @media (min-width: 900px) {
   .grid {
-    grid-template-columns: 380px 1fr; /* left fixed-ish, right flexible */
+    grid-template-columns: 380px 1fr;
+    /* left fixed-ish, right flexible */
     grid-template-areas:
       "left  map"
       "roster roster";
     align-items: start;
   }
 
-  .left-col  { grid-area: left; }
-  .right-col { grid-area: map; }
-  .grid-roster { grid-area: roster; }
+  .left-col {
+    grid-area: left;
+  }
+
+  .right-col {
+    grid-area: map;
+  }
+
+  .grid-roster {
+    grid-area: roster;
+  }
 
   /* keep the map visible while scrolling */
   .right-col #mapPanel {
@@ -157,13 +215,17 @@ button:hover {
 }
 
 /* tidy spacing in left column */
-.left-col .section { margin-bottom: 16px; }
+.left-col .section {
+  margin-bottom: 16px;
+}
 
-.right-col #mapPanel { height: 400px; }.
+.right-col #mapPanel {
+  height: 400px;
+}
 
-
-#mapPanel {
+. #mapPanel {
   height: 400px;
   width: 100%;
-  margin-top: 10px; /* optional for spacing */
+  margin-top: 10px;
+  /* optional for spacing */
 }
