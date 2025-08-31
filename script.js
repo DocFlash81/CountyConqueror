@@ -832,7 +832,7 @@ function loadRoute() {
 
   summaryText += `<br><br>
         <span style="color:#b91c1c; font-weight:bold;">Vital counties: ${vitalCount}</span>,
-        <span style="color:#007700; font-weight:bold;">Presidential counties: ${presCount}</span>`;
+        <span style="color:#007700; font-weight:bold;">'Presidential' counties: ${presCount}</span>`;
 
   document.getElementById("ifactsPanel").innerHTML = summaryText;
 
@@ -949,11 +949,15 @@ function loadCountyFocus(county, state) {
   const routes = getRoutesForCounty(county, state);
   console.log("Routes found:", routes, "cfRouteList before:", document.getElementById("cfRouteList").innerHTML);
 
-  const listHtml = `
-        <p>Routes through this county:</p>
-        <ul>
-          ${routes.map(r => `<li><a href="#" onclick="jumpToRoute('${r}')">${r}</a></li>`).join("")}
-        </ul>`;
+  let listHtml = "";
+
+  if (routes.length > 0) {
+    listHtml = `
+      <p>Routes through this county:</p>
+      <ul>
+        ${routes.map(r => `<li><a href="#" onclick="jumpToRoute('${r}')">${r}</a></li>`).join("")}
+      </ul>`;
+  }
 
   document.getElementById("cfRouteList").innerHTML = listHtml;
 }
@@ -993,22 +997,48 @@ async function handleCountySelection(state, county) {
     f => f.properties.STATEFP === fips && f.properties.NAME === county
   );
 
-  console.log("Polygon match:", match);
+  console.log("Polygon match raw:", match);
+  console.log("Polygon match type:", typeof match, "truthy?", !!match);
 
   if (match) {
-    if (window.countyLayer) leafletMap.removeLayer(window.countyLayer);
-    window.countyLayer = L.geoJSON(match, {
-      style: { color: "blue", weight: 2, fillOpacity: 0.2 }
-    }).addTo(leafletMap);
-    leafletMap.fitBounds(window.countyLayer.getBounds());
+ 
+    console.log("in the match if loop");
+  const routesHere = routeData.filter(r => r.County === county && r.State === state);
+  const routeCount = routesHere.length;
 
-    // TODO: If this county is "vital" (only 1 route passes), change its color
-    // to red here. Also show a note: "This county is *vital* to that route."
-    // If 0 routes, note it's off the US/Interstate grid.
+  let style = { color: "blue", weight: 2, fillOpacity: 0.2 };
+  let note = "";
 
-  } else {
-    console.warn("No polygon match for", county, state);
+  console.log("County:", county, "State:", state,  "Routes here:", routeCount);
+  if (routeCount === 1) {
+    style = { color: "red", weight: 2, fillOpacity: 0.4 };
+    note = "This county is vital (only 1 route passes through).";
+  } else if (routeCount === 0) {
+    style = { color: "black", weight: 2, fillOpacity: 0.2 };
+    note = "This county is off the US/Interstate grid.";
   }
+
+console.log("Note decided:", note);
+
+  if (window.countyLayer) leafletMap.removeLayer(window.countyLayer);
+  window.countyLayer = L.geoJSON(match, { style }).addTo(leafletMap);
+  leafletMap.fitBounds(window.countyLayer.getBounds());
+
+  // Clear any old note
+  const oldNote = document.getElementById("county-note");
+  if (oldNote) oldNote.remove();
+
+  // Add note if needed
+  if (note) {
+    const p = document.createElement("p");
+    p.id = "county-note";
+    p.style.color = "#900";
+    p.style.fontWeight = "bold";
+    p.textContent = note;
+    document.getElementById("cfRouteList").insertAdjacentElement("beforebegin", p);
+  }
+}
+
 
   // Update the route list panel
   loadCountyFocus(county, state);
