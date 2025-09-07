@@ -41,6 +41,37 @@ const stateToFips = {
   VA: "51", WA: "53", WV: "54", WI: "55", WY: "56"
 };
 
+// GROUPS is for the RD dropdown
+const GROUPS = [
+  // Interstates — Main
+  { id: "I-main-1", label: "Interstates 2–40", klass: "I-main", ranges: [[2, 40]] },
+  { id: "I-main-2", label: "Interstates 41–74", klass: "I-main", ranges: [[41, 74]] },
+  { id: "I-main-3", label: "Interstates 75–99", klass: "I-main", ranges: [[75, 99]] },
+
+  // Interstates — Spurs (your 8 buckets)
+  { id: "I-spur-1", label: "I-105–I-184", klass: "I-spur", ranges: [[105, 184]] },
+  { id: "I-spur-2", label: "I-185–I-235", klass: "I-spur", ranges: [[185, 235]] },
+  { id: "I-spur-3", label: "I-238–I-285", klass: "I-spur", ranges: [[238, 285]] },
+  { id: "I-spur-4", label: "I-287–I-380", klass: "I-spur", ranges: [[287, 380]] },
+  { id: "I-spur-5", label: "I-381–I-475", klass: "I-spur", ranges: [[381, 475]] },
+  { id: "I-spur-6", label: "I-476–I-587", klass: "I-spur", ranges: [[476, 587]] },
+  { id: "I-spur-7", label: "I-590–I-696", klass: "I-spur", ranges: [[590, 696]] },
+  { id: "I-spur-8", label: "I-705–I-990", klass: "I-spur", ranges: [[705, 990]] },
+
+  // US — Main
+  { id: "US-main-1", label: "US 1–16", klass: "US-main", ranges: [[1, 16]] },
+  { id: "US-main-2", label: "US 17–34", klass: "US-main", ranges: [[17, 34]] },
+  { id: "US-main-3", label: "US 35–58", klass: "US-main", ranges: [[35, 58]] },
+  { id: "US-main-4", label: "US 59-76", klass: "US-main", ranges: [[59, 76]] },
+  { id: "US-main-5", label: "US 77–101", klass: "US-main", ranges: [[77, 101]] },
+
+  // US — Spurs
+  { id: "US-spur-1", label: "US 113–178", klass: "US-spur", ranges: [[113, 178]] },
+  { id: "US-spur-2", label: "US 180–259", klass: "US-spur", ranges: [[180, 259]] },
+  { id: "US-spur-3", label: "US 265-350", klass: "US-spur", ranges: [[264, 350]] },
+  { id: "US-spur-4", label: "US 360–730", klass: "US-spur", ranges: [[360, 730]] },
+];
+
 
 // ------ INITIALIZATION ------
 
@@ -131,6 +162,49 @@ function parseCsv(url, onComplete) {
   });
 }
 
+// parseRouteId separates the RouteInfo Route into 3 components: System ("I" or "US"), number, suffix ("A", "E" ).
+function parseRouteId(id) {
+  // e.g. "I.105.CA", "US.20A", "US.58"
+  const m = /^([A-Z]+)\.(\d+)([A-Z]?)(?:\.[A-Z]{2})?$/.exec(id);
+  if (!m) return null;
+  const sys = m[1];              // "I" or "US"
+  const num = parseInt(m[2], 10); // 5, 58, 105, 20, 101, etc.
+  const suf = m[3] || "";         // "A" for 20A, else ""
+  return { sys, num, suf, id };
+}
+
+// routeClass determines Interstate or US
+function routeClass(r) {
+  // US-101 is historically "main" — treat as main even though 3 digits
+  if (r.sys === "I") return r.num < 100 ? "I-main" : "I-spur";
+  if (r.sys === "US") return (r.num <= 101) ? "US-main" : "US-spur";
+  return "other";
+}
+
+// cmpRoute helps sort
+// Sort: numeric, then suffix so 20 < 20A
+function cmpRoute(a, b) {
+  const pa = parseRouteId(a), pb = parseRouteId(b);
+  if (!pa || !pb) return a.localeCompare(b);
+  if (pa.sys !== pb.sys) return pa.sys.localeCompare(pb.sys);
+  if (pa.num !== pb.num) return pa.num - pb.num;
+  return pa.suf.localeCompare(pb.suf);
+}
+
+// inRanges determines if a value is in the given range
+function inRanges(num, ranges) {
+  return ranges.some(([lo, hi]) => num >= lo && num <= hi);
+}
+
+// findGroupForRoute is needed due to the two step dropdown
+function findGroupForRoute(routeId) {
+  for (const g of window.routeBuckets.values()) {
+    if (g.routes.includes(routeId)) return g.id;
+  }
+  return null;
+}
+
+
 // ------ Mapping Helpers -------
 
 // clearKmlLayer removes both kmlLayer and kmlCasingLayer
@@ -200,7 +274,6 @@ async function addKmlFromUrl(url, opts = {}) {
       }
     }).addTo(leafletMap);
 
-    // 2) add main line with proper color
     // 2) add main line with proper color
     const routeColor = colorForRoute(routeName);
 
@@ -496,36 +569,61 @@ function updateRouteDetailControlsUI() {
   document.getElementById("lumpChk").checked = !!lumpMode;
 }
 
-// populateRouteDropdown fills the dropdown menu with optgroups
-function populateRouteDropdown() {
-  const dropdown = document.getElementById("routeSelect");
-  dropdown.innerHTML = "";  // clear existing
+// buildGroupedRoutes is the first step in the two-stage dropdown
+function buildGroupedRoutes(allRouteIds) {
+  const buckets = new Map(GROUPS.map(g => [g.id, { ...g, routes: [] }]));
+  const unassigned = [];
 
-  // Group routes by Type from routeInfo
-  const groups = {};
-  routeInfo.forEach(r => {
-    const type = r.Type || "Other";
-    if (!groups[type]) groups[type] = [];
-    groups[type].push(r.Route);
-  });
+  for (const rid of allRouteIds) {
+    const p = parseRouteId(rid);
+    if (!p) { unassigned.push(rid); continue; }
+    const klass = routeClass(p);
+    const grp = GROUPS.find(g => g.klass === klass && inRanges(p.num, g.ranges));
+    if (grp) {
+      buckets.get(grp.id).routes.push(rid);
+    } else {
+      unassigned.push(rid);
+    }
+  }
 
-  // Sort group keys and each group's routes
-  Object.keys(groups).sort().forEach(type => {
-    const optgroup = document.createElement("optgroup");
-    optgroup.label = type;
+  // sort each group's routes
+  for (const g of buckets.values()) g.routes.sort(cmpRoute);
+  return { buckets, unassigned };
+}
 
-    groups[type]
-      .filter((v, i, arr) => arr.indexOf(v) === i) // unique within group
-      .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
-      .forEach(route => {
-        const option = document.createElement("option");
-        option.value = route;
-        option.text = route;
-        optgroup.appendChild(option);
-      });
+// populateGroupDropdown wires up the first dropdown
+function populateGroupDropdown(buckets) {
+  const sel = document.getElementById("routeGroupSelect");
 
-    dropdown.appendChild(optgroup);
-  });
+  // Start with placeholder
+  sel.innerHTML = "<option value=''>-- Choose a Group --</option>";
+
+  for (const g of buckets.values()) {
+    if (g.routes.length === 0) continue;
+    const opt = document.createElement("option");
+    opt.value = g.id;
+    opt.textContent = g.label;
+    sel.appendChild(opt);
+  }
+}
+
+//populateRouteDropdown populates the second dropdown
+function populateRouteDropdown(buckets) {
+  const gsel = document.getElementById("routeGroupSelect");
+  const rsel = document.getElementById("routeSelect");
+  const g = buckets.get(gsel.value);
+
+  // Always start with a placeholder
+  rsel.innerHTML = "<option value=''>-- Choose a Route --</option>";
+
+  if (!g) return;
+
+  for (const rid of g.routes) {
+    const opt = document.createElement("option");
+    opt.value = rid;
+    opt.textContent = rid.replaceAll(".", " ");
+    rsel.appendChild(opt);
+  }
 }
 
 //computeTriplist mirrors R CountyLogic.R. Sets up removal flags for touch (reentry) mode
@@ -625,6 +723,37 @@ function applyLump(df1, lump = 0) {
     }
   }
   return Array.from(byCounty.values());
+}
+
+// computeRosterFacts adds cool summary information, using the roster facts in triplist (where roster comes from)
+function computeRosterFacts(roster) {
+  if (!roster || roster.length === 0) return null;
+
+  const segments = roster.length;
+  const totalMiles = roster.reduce((sum, r) => sum + toNum(r.Miles), 0);
+  const avgMilesPerSegment = segments > 0 ? totalMiles / segments : 0;
+
+  // Mileage & county counts by state
+  const byState = {};
+  roster.forEach(r => {
+    const st = r.State;
+    const miles = toNum(r.Miles);
+    if (!byState[st]) {
+      byState[st] = { miles: 0, counties: new Set() };
+    }
+    byState[st].miles += miles;
+    byState[st].counties.add(r.County);
+  });
+
+  const milesByState = {};
+  for (const [st, obj] of Object.entries(byState)) {
+    milesByState[st] = {
+      miles: obj.miles,
+      countyCount: obj.counties.size
+    };
+  }
+
+  return { segments, avgMilesPerSegment, milesByState };
 }
 
 // renderRoster creates the view for the chosen roster
@@ -736,24 +865,32 @@ function enterRouteDetailMode(selectedRoute = null) {
   }
 
   // clear RD leftovers
-  // clearKmlLayer();
   markersLayer.clearLayers();
   if (routePolyLayer) {
     leafletMap.removeLayer(routePolyLayer);
     routePolyLayer = null;
   }
 
-  populateRouteDropdown();
-  updateRouteDetailControlsUI();
+  // build group dropdown
+  populateGroupDropdown(window.routeBuckets);
+  const routeSel = document.getElementById("routeSelect");
+  routeSel.innerHTML = "<option value=''>-- Choose a Route --</option>";
+
+  // auto-select first group (Interstates 2–40)
+  const groupSel = document.getElementById("routeGroupSelect");
+  if (!selectedRoute && !lastRoute) {
+    groupSel.value = "I-main-1";             // default group
+    populateRouteDropdown(window.routeBuckets); // fill routes (still placeholder on top)
+  }
 
   // show UI
   document.getElementById("route-detail-ui").style.display = "block";
   document.getElementById("route-detail-controls").style.display = "block";
 
-  // if coming from CF and we know a route, load it
+  // if coming from CF or persistence and we know a route, try to load it
   const routeToLoad = selectedRoute || lastRoute;
-  if (routeToLoad) {
-    document.getElementById("routeSelect").value = routeToLoad;
+  if (routeToLoad && routeSel.querySelector(`option[value="${routeToLoad}"]`)) {
+    routeSel.value = routeToLoad;
     loadRoute();
   }
 }
@@ -821,21 +958,27 @@ function loadRoute() {
     + `<br><br>Type: ${summary.Type}, Direction: ${summary.Direction}`
     : `Summary not available for ${route}.`;
 
-  // Lookup extra facts
-  //if (routeFacts[route]) {
-  //  summaryText += `<br><br><em>${routeFacts[route].fact}</em>`;
-  //}
+  // --- Extra computed facts ---
+  const facts = computeRosterFacts(roster);
+  if (facts) {
+    if (facts.segments) {
+      summaryText += `<br><br>Segments: ${facts.segments}`;
+      if (facts.avgMilesPerSegment) {
+        summaryText += ` (avg ${facts.avgMilesPerSegment.toFixed(1)} mi/segment)`;
+      }
+    }
 
-  // TODO: load extra facts from routeFacts.json and append here.
-  // Include # of segments, average by segment, etc. Also, summarize mileage by state.
-
+    summaryText += `<br><br><u>Mileage and counties by state</u>:<br>`;
+    for (const [st, obj] of Object.entries(facts.milesByState)) {
+      summaryText += `${st}: ${obj.miles.toFixed(1)} mi across ${obj.countyCount} counties<br>`;
+    }
+  }
 
   summaryText += `<br><br>
         <span style="color:#b91c1c; font-weight:bold;">Vital counties: ${vitalCount}</span>,
         <span style="color:#007700; font-weight:bold;">'Presidential' counties: ${presCount}</span>`;
 
   document.getElementById("ifactsPanel").innerHTML = summaryText;
-
 
   // Render roster panel
   renderRoster(roster);
@@ -963,11 +1106,32 @@ function loadCountyFocus(county, state) {
 }
 
 // jumpToRoute is our bridge to display the individual routes, using loadRoute from RouteDetail mode
-function jumpToRoute(route) {
-  lastRoute = null;
+function jumpToRoute(routeId) {
+  // Remember the route for persistence
+  lastRoute = routeId;
+
+  // Find which group this route belongs to
+  const groupId = findGroupForRoute(routeId);
+
+  // Switch to RD mode (this hides CF UI and resets the dropdowns)
   setMode("route");
-  document.getElementById("routeSelect").value = route;
-  loadRoute();
+
+  // Now repopulate routes for that group
+  if (groupId) {
+    document.getElementById("routeGroupSelect").value = groupId;
+    populateRouteDropdown(window.routeBuckets);
+  }
+
+  // Set the specific route value
+  const routeSel = document.getElementById("routeSelect");
+  routeSel.value = routeId;
+
+  // Finally, load it
+  if (routeSel.value === routeId) {
+    loadRoute();
+  } else {
+    console.warn("Route not found in dropdown:", routeId);
+  }
 }
 
 // handleCountySelection does the actions for County Focus mode
@@ -1001,43 +1165,43 @@ async function handleCountySelection(state, county) {
   console.log("Polygon match type:", typeof match, "truthy?", !!match);
 
   if (match) {
- 
+
     console.log("in the match if loop");
-  const routesHere = routeData.filter(r => r.County === county && r.State === state);
-  const routeCount = routesHere.length;
+    const routesHere = routeData.filter(r => r.County === county && r.State === state);
+    const routeCount = routesHere.length;
 
-  let style = { color: "blue", weight: 2, fillOpacity: 0.2 };
-  let note = "";
+    let style = { color: "blue", weight: 2, fillOpacity: 0.2 };
+    let note = "";
 
-  console.log("County:", county, "State:", state,  "Routes here:", routeCount);
-  if (routeCount === 1) {
-    style = { color: "red", weight: 2, fillOpacity: 0.4 };
-    note = "This county is vital (only 1 route passes through).";
-  } else if (routeCount === 0) {
-    style = { color: "black", weight: 2, fillOpacity: 0.2 };
-    note = "This county is off the US/Interstate grid.";
+    console.log("County:", county, "State:", state, "Routes here:", routeCount);
+    if (routeCount === 1) {
+      style = { color: "red", weight: 2, fillOpacity: 0.4 };
+      note = "This county is vital (only 1 route passes through).";
+    } else if (routeCount === 0) {
+      style = { color: "black", weight: 2, fillOpacity: 0.2 };
+      note = "This county is off the US/Interstate grid.";
+    }
+
+    console.log("Note decided:", note);
+
+    if (window.countyLayer) leafletMap.removeLayer(window.countyLayer);
+    window.countyLayer = L.geoJSON(match, { style }).addTo(leafletMap);
+    leafletMap.fitBounds(window.countyLayer.getBounds());
+
+    // Clear any old note
+    const oldNote = document.getElementById("county-note");
+    if (oldNote) oldNote.remove();
+
+    // Add note if needed
+    if (note) {
+      const p = document.createElement("p");
+      p.id = "county-note";
+      p.style.color = "#900";
+      p.style.fontWeight = "bold";
+      p.textContent = note;
+      document.getElementById("cfRouteList").insertAdjacentElement("beforebegin", p);
+    }
   }
-
-console.log("Note decided:", note);
-
-  if (window.countyLayer) leafletMap.removeLayer(window.countyLayer);
-  window.countyLayer = L.geoJSON(match, { style }).addTo(leafletMap);
-  leafletMap.fitBounds(window.countyLayer.getBounds());
-
-  // Clear any old note
-  const oldNote = document.getElementById("county-note");
-  if (oldNote) oldNote.remove();
-
-  // Add note if needed
-  if (note) {
-    const p = document.createElement("p");
-    p.id = "county-note";
-    p.style.color = "#900";
-    p.style.fontWeight = "bold";
-    p.textContent = note;
-    document.getElementById("cfRouteList").insertAdjacentElement("beforebegin", p);
-  }
-}
 
 
   // Update the route list panel
@@ -1061,7 +1225,6 @@ console.log("Note decided:", note);
 // ------ CONNECTIONS MODE ------
 
 
-// enterConnectionsMode sets up Connection mode
 function enterConnectionsMode() {
   // clear both RD + CF layers
   clearKmlLayer();
@@ -1078,6 +1241,16 @@ function enterConnectionsMode() {
     "<p style='color:#666;font-style:italic;'>Roster not available in Connections Mode.</p>";
 
   populateState1Dropdown();
+
+  // 🔑 Restore persistence if we have states saved
+  if (lastState1 && lastState2) {
+    document.getElementById("state1Select").value = lastState1;
+    populateNextDropdown(lastState1);
+    document.getElementById("state2Select").value = lastState2;
+
+    // Re-apply selection to rebuild map + list
+    handleSelections(lastState1, lastState2);
+  }
 }
 
 // Populate the first State dropdown
@@ -1230,7 +1403,6 @@ async function handleSelections(state1, state2) {
 
 // ------ BOOTSTRAP ------
 
-
 document.addEventListener("DOMContentLoaded", () => {
   const nocache = `?v=${Date.now()}`;
 
@@ -1253,8 +1425,6 @@ document.addEventListener("DOMContentLoaded", () => {
               CountyCentroids = cent;
 
               // 4) Load county polygons, for County Focus mode
-
-              // Load the simplified county polygons
               fetch("https://raw.githubusercontent.com/DocFlash81/cc-data/refs/heads/main/CountyPolygons.json")
                 .then(res => res.json())
                 .then(data => {
@@ -1263,35 +1433,35 @@ document.addEventListener("DOMContentLoaded", () => {
                 })
                 .catch(err => console.error("Failed to load county polygons:", err));
 
+              // Initialize map
+              initMap();
 
-              initMap(); // <-- set up Leaflet once
+              // Build route buckets once
+              const allRouteIds = routeInfo.map(r => r.Route);
+              const { buckets } = buildGroupedRoutes(allRouteIds);
+              window.routeBuckets = buckets;
 
-              // We populate the dropdowns now, though we don't need them until the particular mode is called.
-              populateStateDropdown();
-              populateRouteDropdown();
+              // One-time listeners
+              document.getElementById("routeGroupSelect")
+                .addEventListener("change", () => populateRouteDropdown(routeBuckets));
 
-              // This listener is for resizing, so we don't have stale and odd-looking partial maps on zooms
+              document.getElementById("routeSelect")
+                .addEventListener("change", () => {
+                  loadRoute();
+                  const mapEl = document.getElementById("mapPanel");
+                  if (mapEl && currentMode === "county") {
+                    mapEl.scrollIntoView({ behavior: "smooth", block: "start" });
+                  }
+                });
+
               window.addEventListener("resize", () => {
                 if (leafletMap) leafletMap.invalidateSize();
               });
 
-              // We default to RD mode, so these controls are wired up now
-              setupRouteDetailControls();
+              setupRouteDetailControls(); // wire RD buttons/checkboxes
 
-              // This fires when a route changes; we need to manage clearings correctly
-              document
-                .getElementById("routeSelect")
-                .addEventListener("change", () => {
-                  loadRoute();
-                  const mapEl = document.getElementById("mapPanel");
-                  if (mapEl)
-                    if (currentMode === "county") {
-                      mapEl.scrollIntoView({
-                        behavior: "smooth",
-                        block: "start",
-                      });
-                    }
-                });
+              // Default into Route Detail mode
+              setMode("route");
             }
           );
         }
