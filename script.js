@@ -68,7 +68,7 @@ const GROUPS = [
   // US — Spurs
   { id: "US-spur-1", label: "US 113–178", klass: "US-spur", ranges: [[113, 178]] },
   { id: "US-spur-2", label: "US 180–259", klass: "US-spur", ranges: [[180, 259]] },
-  { id: "US-spur-3", label: "US 265-350", klass: "US-spur", ranges: [[264, 350]] },
+  { id: "US-spur-3", label: "US 264-350", klass: "US-spur", ranges: [[264, 350]] },
   { id: "US-spur-4", label: "US 360–730", klass: "US-spur", ranges: [[360, 730]] },
 ];
 
@@ -162,15 +162,50 @@ function parseCsv(url, onComplete) {
   });
 }
 
+// flipDirection flips the direction for display
+function flipDirection(dir) {
+  if (dir === "WE") return "EW";
+  if (dir === "EW") return "WE";
+  if (dir === "SN") return "NS";
+  if (dir === "NS") return "SN";
+  return dir;
+}
+
 // parseRouteId separates the RouteInfo Route into 3 components: System ("I" or "US"), number, suffix ("A", "E" ).
 function parseRouteId(id) {
-  // e.g. "I.105.CA", "US.20A", "US.58"
-  const m = /^([A-Z]+)\.(\d+)([A-Z]?)(?:\.[A-Z]{2})?$/.exec(id);
-  if (!m) return null;
-  const sys = m[1];              // "I" or "US"
-  const num = parseInt(m[2], 10); // 5, 58, 105, 20, 101, etc.
-  const suf = m[3] || "";         // "A" for 20A, else ""
-  return { sys, num, suf, id };
+  // Split on "."
+  const parts = id.split(".");
+
+  // First part is always the system, like "US" or "I"
+  const sys = parts[0];
+
+  // Second part should always start with the number (like "11", "264A")
+  const numPart = parts[1] || "";
+  const num = parseInt(numPart.match(/^\d+/)[0]);   // take leading digits
+  const suf1 = numPart.replace(/^\d+/, "");         // anything after digits (like "A")
+
+  // Initialize optional pieces
+  let suf2 = "";
+  let state = "";
+  let index = "";
+
+  // Walk through the remaining parts
+  for (let i = 2; i < parts.length; i++) {
+    const p = parts[i];
+    if (/^[A-Z]{2}\d*$/.test(p)) {
+      // State code, possibly with index like "NC1"
+      state = p.match(/^[A-Z]{2}/)[0];
+      index = p.replace(/^[A-Z]{2}/, "");
+    } else if (/^[A-Z]$/.test(p)) {
+      // Single-letter suffix like "E" or "W"
+      suf2 = p;
+    } else {
+      // Fallback: stick anything else into suf2
+      suf2 = p;
+    }
+  }
+
+  return { sys, num, suf1, suf2, state, index };
 }
 
 // routeClass determines Interstate or US
@@ -184,11 +219,28 @@ function routeClass(r) {
 // cmpRoute helps sort
 // Sort: numeric, then suffix so 20 < 20A
 function cmpRoute(a, b) {
-  const pa = parseRouteId(a), pb = parseRouteId(b);
-  if (!pa || !pb) return a.localeCompare(b);
-  if (pa.sys !== pb.sys) return pa.sys.localeCompare(pb.sys);
-  if (pa.num !== pb.num) return pa.num - pb.num;
-  return pa.suf.localeCompare(pb.suf);
+  const ra = parseRouteId(a);
+  const rb = parseRouteId(b);
+
+  // sort by system (I, US, etc.)
+  if (ra.sys !== rb.sys) return ra.sys.localeCompare(rb.sys);
+
+  // then by number
+  if (ra.num !== rb.num) return ra.num - rb.num;
+
+  // then by suffix 1 (A, B, etc.)
+  if (ra.suf1 !== rb.suf1) return ra.suf1.localeCompare(rb.suf1);
+
+  // then by suffix 2 (E, W, etc.)
+  if (ra.suf2 !== rb.suf2) return ra.suf2.localeCompare(rb.suf2);
+
+  // then by state code (VA, NC, etc.)
+  if (ra.state !== rb.state) return ra.state.localeCompare(rb.state);
+
+  // finally by index (like NC1 vs NC2)
+  if (ra.index !== rb.index) return (ra.index || "").localeCompare(rb.index || "");
+
+  return 0;
 }
 
 // inRanges determines if a value is in the given range
@@ -361,38 +413,36 @@ async function addKmlForRouteNoClear(route) {
       const xml = new DOMParser().parseFromString(text, "text/xml");
       const gj = toGeoJSON.kml(xml);
 
-      const routeColor = colorForRoute(route);
+      // --- merge only the line-type geometries ---
+      // --- flatten MultiGeometry (GeometryCollection) ---
+      const flattened = [];
+      gj.features.forEach(feat => {
+        const g = feat.geometry;
+        if (!g) return;
 
-      // 1) casing (black, thicker, goes underneath)
-      const casing = L.geoJSON(gj, {
-        pane: "routes",
-        style: feature => {
-          const t = feature.geometry && feature.geometry.type;
-          const { casing } = kmlWeights(leafletMap.getZoom());
-          if (t === "LineString" || t === "MultiLineString")
-            return { color: "#000000", weight: casing, opacity: 1 };
+        if (g.type === "GeometryCollection" && Array.isArray(g.geometries)) {
+          g.geometries.forEach(sub => {
+            if (sub.type === "LineString" || sub.type === "MultiLineString") {
+              flattened.push({ type: "Feature", properties: feat.properties, geometry: sub });
+            }
+          });
+        } else if (g.type === "LineString" || g.type === "MultiLineString") {
+          flattened.push(feat);
         }
       });
-      countyRouteLayers.addLayer(casing);
 
-      // 2) main colored line
-      const mainLine = L.geoJSON(gj, {
+      const merged = { type: "FeatureCollection", features: flattened };
+
+      const routeColor = colorForRoute(route);
+      const { line, casing } = kmlWeights(leafletMap.getZoom());
+
+      const casingLayer = L.geoJSON(merged, {
         pane: "routes",
-        style: feature => {
-          const t = feature.geometry && feature.geometry.type;
-          const { line } = kmlWeights(leafletMap.getZoom());
-          if (t === "LineString" || t === "MultiLineString")
-            return { color: routeColor, weight: line, opacity: 1 };
-          if (t === "Polygon" || t === "MultiPolygon")
-            return {
-              color: routeColor,
-              weight: 3,
-              opacity: 0.95,
-              fillColor: "#FFF3A1",
-              fillOpacity: 0.25
-            };
-          return { color: routeColor, weight: line, opacity: 1 };
-        },
+        style: () => ({ color: "#000000", weight: casing, opacity: 1 })
+      });
+      const mainLayer = L.geoJSON(merged, {
+        pane: "routes",
+        style: () => ({ color: routeColor, weight: line, opacity: 1 }),
         onEachFeature: (feature, layer) => {
           layer.bindTooltip(route, {
             permanent: true,
@@ -402,7 +452,10 @@ async function addKmlForRouteNoClear(route) {
           });
         }
       });
-      countyRouteLayers.addLayer(mainLine);
+
+      countyRouteLayers.addLayer(casingLayer);
+      countyRouteLayers.addLayer(mainLayer);
+      mainLayer.bringToFront();   // enforce draw order
 
       return true;
     } catch (err) {
@@ -533,9 +586,15 @@ function setMode(mode) {
 // setupRouteDetailControls creates the inputs Route Detail mode uses
 function setupRouteDetailControls() {
   document.getElementById("dirBtn").addEventListener("click", () => {
+    const route = document.getElementById("routeSelect").value;
+    if (!route) return; // ignore if no route selected
+    const info = routeInfo.find(d => d.Route === route);
+    if (info && info.Direction) {
+      info.Direction = flipDirection(info.Direction);
+    }
     currentDirection = currentDirection ? 0 : 1;
     updateRouteDetailControlsUI();
-    loadRoute(); // re-render with new direction
+    loadRoute();
   });
   document.getElementById("touchChk").addEventListener("change", (e) => {
     touchMode = e.target.checked ? 1 : 0;
@@ -564,7 +623,9 @@ function setupRouteDetailControls() {
 // updateRouteDetailControlsUI resets to the new settings
 function updateRouteDetailControlsUI() {
   const dirBtn = document.getElementById("dirBtn");
-  dirBtn.textContent = currentDirection ? "Direction: Reverse" : "Direction: Forward";
+  // Always keep the button text static
+  dirBtn.textContent = "Switch Direction";
+
   document.getElementById("touchChk").checked = !!touchMode;
   document.getElementById("lumpChk").checked = !!lumpMode;
 }
@@ -641,7 +702,7 @@ function computeTriplist(route, direction = 0) {
   const tl = routeData
     .filter(d => d.Route === route)
     .sort((a, b) =>
-      (direction === 1 ? (b[orderKey] - a[orderKey]) : (a[orderKey] - b[orderKey]))
+      (direction === 0 ? (a[orderKey] - b[orderKey]) : (b[orderKey] - a[orderKey]))
     )
     .map((d, i) => {
       const RFlag = (d[sliverKey] || "").toString().charAt(0);
@@ -851,48 +912,50 @@ function plotRosterOnMap(roster) {
 
   if (pts.length) {
     const bounds = L.latLngBounds(pts);
-    leafletMap.fitBounds(bounds.pad(0.2));
+
+    // --- Dynamic padding based on geographic span ---
+    const latDiff = Math.abs(bounds.getNorth() - bounds.getSouth());
+    const lonDiff = Math.abs(bounds.getEast() - bounds.getWest());
+    const span = Math.max(latDiff, lonDiff);
+
+    let pad = Math.min(0.04, 0.01 + 0.0015 * span);
+
+    leafletMap.fitBounds(bounds.pad(pad));
   }
+
 }
 
 // enterRouteDetailMode sets up the mode
 function enterRouteDetailMode(selectedRoute = null) {
-  // clear CF overlays
   countyRouteLayers.clearLayers();
-  if (window.countyLayer) {
-    leafletMap.removeLayer(window.countyLayer);
-    window.countyLayer = null;
-  }
-
-  // clear RD leftovers
+  if (window.countyLayer) { leafletMap.removeLayer(window.countyLayer); window.countyLayer = null; }
   markersLayer.clearLayers();
-  if (routePolyLayer) {
-    leafletMap.removeLayer(routePolyLayer);
-    routePolyLayer = null;
-  }
+  if (routePolyLayer) { leafletMap.removeLayer(routePolyLayer); routePolyLayer = null; }
 
-  // build group dropdown
   populateGroupDropdown(window.routeBuckets);
   const routeSel = document.getElementById("routeSelect");
-  routeSel.innerHTML = "<option value=''>-- Choose a Route --</option>";
-
-  // auto-select first group (Interstates 2–40)
   const groupSel = document.getElementById("routeGroupSelect");
+
+  // default group if first entry
   if (!selectedRoute && !lastRoute) {
-    groupSel.value = "I-main-1";             // default group
-    populateRouteDropdown(window.routeBuckets); // fill routes (still placeholder on top)
+    groupSel.value = "I-main-1";
+    populateRouteDropdown(window.routeBuckets);
   }
 
-  // show UI
+  // new: ensure routes are loaded for the last route's group
+  const routeToLoad = selectedRoute || lastRoute;
+  if (routeToLoad) {
+    const groupId = findGroupForRoute(routeToLoad);
+    if (groupId) {
+      groupSel.value = groupId;
+      populateRouteDropdown(window.routeBuckets);
+      routeSel.value = routeToLoad;
+      loadRoute();   // <- triggers KML load immediately
+    }
+  }
+
   document.getElementById("route-detail-ui").style.display = "block";
   document.getElementById("route-detail-controls").style.display = "block";
-
-  // if coming from CF or persistence and we know a route, try to load it
-  const routeToLoad = selectedRoute || lastRoute;
-  if (routeToLoad && routeSel.querySelector(`option[value="${routeToLoad}"]`)) {
-    routeSel.value = routeToLoad;
-    loadRoute();
-  }
 }
 
 // loadRoute is the action for this mode
@@ -974,6 +1037,8 @@ function loadRoute() {
     }
   }
 
+  // TODO: This table of mileages by state needs to be a table (<td>)
+
   summaryText += `<br><br>
         <span style="color:#b91c1c; font-weight:bold;">Vital counties: ${vitalCount}</span>,
         <span style="color:#007700; font-weight:bold;">'Presidential' counties: ${presCount}</span>`;
@@ -1021,12 +1086,16 @@ function enterCountyFocusMode() {
 }
 
 // Populate the State dropdown using CountyCentroids
+const EXCLUDE_STATES = ["AS", "GU", "MP", "PR", "VI"];
 function populateStateDropdown() {
   const stateSelect = document.getElementById("stateSelect");
   stateSelect.innerHTML = '<option value="">-- Choose a State --</option>';
 
-  // Unique states from CountyCentroids
-  const states = [...new Set(CountyCentroids.map(c => c.STUSPS))].sort();
+  const states = [...new Set(
+    CountyCentroids.map(c => c.STUSPS)
+  )]
+    .filter(st => !EXCLUDE_STATES.includes(st))  // <-- filter here
+    .sort();
 
   states.forEach(st => {
     const opt = document.createElement("option");
@@ -1035,7 +1104,6 @@ function populateStateDropdown() {
     stateSelect.appendChild(opt);
   });
 
-  // Hook up listener for state change
   stateSelect.addEventListener("change", () => {
     const st = stateSelect.value;
     populateCountyDropdown(st);
@@ -1230,6 +1298,19 @@ function enterConnectionsMode() {
   clearKmlLayer();
   countyRouteLayers.clearLayers();
   markersLayer.clearLayers();
+  // also remove any leftover county highlight
+  if (window.countyLayer) {
+    leafletMap.removeLayer(window.countyLayer);
+    window.countyLayer = null;
+  }
+  // also clear leftover polygons right away
+  if (routePolyLayer) {
+    leafletMap.removeLayer(routePolyLayer);
+    routePolyLayer = null;
+  }
+  leafletMap.eachLayer(l => {
+    if (l instanceof L.GeoJSON && !l.getAttribution) leafletMap.removeLayer(l);
+  });
 
   // show only Connections UI
   document.getElementById("connections-ui").style.display = "block";
@@ -1258,7 +1339,10 @@ function populateState1Dropdown() {
   const state1Select = document.getElementById("state1Select");
   state1Select.innerHTML = '<option value="">-- Choose a State --</option>';
 
-  const states = [...new Set(CountyCentroids.map(c => c.STUSPS))].sort();
+  const states = [...new Set(CountyCentroids.map(c => c.STUSPS))]
+
+    .filter(st => !EXCLUDE_STATES.includes(st))  // <-- filter here
+    .sort();
 
   states.forEach(st => {
     const opt = document.createElement("option");
@@ -1285,6 +1369,7 @@ function populateNextDropdown(state) {
 
   const states = [...new Set(CountyCentroids.map(c => c.STUSPS))]
     .filter(s => s !== state)
+    .filter(st => !EXCLUDE_STATES.includes(st))
     .sort();
 
   states.forEach(st => {
@@ -1333,7 +1418,20 @@ function zoomToStates(state1, state2) {
 
   if (matches.length) {
     const layer = L.geoJSON(matches);
-    leafletMap.fitBounds(layer.getBounds().pad(0.2));
+    const bounds = layer.getBounds();
+
+    // Get lat/lon span
+    const latDiff = Math.abs(bounds.getNorth() - bounds.getSouth());
+    const lonDiff = Math.abs(bounds.getEast() - bounds.getWest());
+    const span = Math.max(latDiff, lonDiff);
+
+    // Dynamic padding: big spans = more padding, small spans = less
+    // Example thresholds — adjust to taste
+    let pad = 0.05; // default tight
+    if (span > 20) pad = 0.15;   // continental size selection
+    else if (span > 10) pad = 0.1; // medium multi-state selection
+
+    leafletMap.fitBounds(bounds.pad(pad));
   }
 }
 
@@ -1378,17 +1476,24 @@ async function handleSelections(state1, state2) {
 
   const selectedFips = [stateToFips[state1], stateToFips[state2]];
 
-  routePolyLayer = L.geoJSON(countyPolygons, {
-    filter: f => {
-      const match = selectedFips.includes(f.properties.STATEFP);
-      if (match) console.log("Matched polygon:", f.properties.NAME, f.properties.STATEFP);
-      return match;
-    },
+  const stateFeatures = statePolygons.features.filter(
+    f => selectedFips.includes(f.properties.STATE)
+  );
+
+  routePolyLayer = L.geoJSON(stateFeatures, {
     style: {
-      color: "#ff9900",
-      weight: 0,
-      fillColor: "#ff9900",
-      fillOpacity: 0.2
+      color: "#cc6600",
+      weight: 2,
+      fillColor: "#ffcc66",
+      fillOpacity: 0.25
+    },
+    onEachFeature: (feature, layer) => {
+      const abbrev = feature.properties.NAME;
+      layer.bindTooltip(abbrev, {
+        permanent: true,
+        direction: "center",
+        className: "state-label"
+      });
     }
   }).addTo(leafletMap);
 
@@ -1432,6 +1537,16 @@ document.addEventListener("DOMContentLoaded", () => {
                   console.log("County polygons loaded:", countyPolygons);
                 })
                 .catch(err => console.error("Failed to load county polygons:", err));
+
+              // Load state polygons, for Connections mode
+              fetch("https://raw.githubusercontent.com/DocFlash81/cc-data/refs/heads/main/StatePolygons.json")
+                .then(res => res.json())
+                .then(data => {
+                  window.statePolygons = data;
+                  console.log("State polygons loaded:", statePolygons);
+                })
+                .catch(err => console.error("Failed to load state polygons:", err));
+
 
               // Initialize map
               initMap();
