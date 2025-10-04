@@ -168,6 +168,8 @@ function flipDirection(dir) {
   if (dir === "EW") return "WE";
   if (dir === "SN") return "NS";
   if (dir === "NS") return "SN";
+  if (dir === "CCW") return "CW";
+  if (dir === "CW") return "CCW";
   return dir;
 }
 
@@ -977,6 +979,7 @@ function loadRoute() {
     leafletMap.removeLayer(routePolyLayer);
     routePolyLayer = null;
   }
+  routePolyLayer = L.layerGroup().addTo(leafletMap);
 
   // Build roster (touch = collapse reentries, lump = merge ind. cities)
   const roster = buildRoster(route, {
@@ -1092,9 +1095,13 @@ function populateStateDropdown() {
   stateSelect.innerHTML = '<option value="">-- Choose a State --</option>';
 
   const states = [...new Set(
-    CountyCentroids.map(c => c.STUSPS)
+    CountyCentroids.map(c => {
+      let st = c.STUSPS?.trim();
+      if (st === "Washington, DC" || st === "District of Columbia") st = "DC";
+      return st;
+    })
   )]
-    .filter(st => !EXCLUDE_STATES.includes(st))  // <-- filter here
+    .filter(st => !EXCLUDE_STATES.includes(st))
     .sort();
 
   states.forEach(st => {
@@ -1294,42 +1301,48 @@ async function handleCountySelection(state, county) {
 
 
 function enterConnectionsMode() {
-  // clear both RD + CF layers
+  // clear RD + CF overlays
   clearKmlLayer();
-  countyRouteLayers.clearLayers();
   markersLayer.clearLayers();
-  // also remove any leftover county highlight
-  if (window.countyLayer) {
-    leafletMap.removeLayer(window.countyLayer);
-    window.countyLayer = null;
+
+  // remove any county or route polygons from RD/CF
+  if (routePolyLayer) { leafletMap.removeLayer(routePolyLayer); routePolyLayer = null; }
+  if (countyRouteLayers) {
+    leafletMap.removeLayer(countyRouteLayers);
+    countyRouteLayers = L.layerGroup().addTo(leafletMap); // reset but keep ready
   }
-  // also clear leftover polygons right away
-  if (routePolyLayer) {
-    leafletMap.removeLayer(routePolyLayer);
-    routePolyLayer = null;
-  }
+  if (window.countyLayer) { leafletMap.removeLayer(window.countyLayer); window.countyLayer = null; }
+
+  // purge leftover route lines (but not connection lines)
   leafletMap.eachLayer(l => {
-    if (l instanceof L.GeoJSON && !l.getAttribution) leafletMap.removeLayer(l);
+    const pane = l.options?.pane || "";
+    const name = l?.feature?.properties?.Name || "";
+    if (l instanceof L.GeoJSON && pane === "routes" && !name.includes("Connection")) {
+      leafletMap.removeLayer(l);
+    }
   });
+
+  // restore view without resetting zoom
+  const currentCenter = leafletMap.getCenter();
+  const currentZoom = leafletMap.getZoom();
 
   // show only Connections UI
   document.getElementById("connections-ui").style.display = "block";
   document.getElementById("connections-controls").style.display = "block";
   document.getElementById("mapPanel").style.display = "block";
 
-  // clear roster panel
   document.getElementById("rosterPanel").innerHTML =
     "<p style='color:#666;font-style:italic;'>Roster not available in Connections Mode.</p>";
 
+  // keep prior view
+  leafletMap.setView(currentCenter, currentZoom);
+
   populateState1Dropdown();
 
-  // 🔑 Restore persistence if we have states saved
   if (lastState1 && lastState2) {
     document.getElementById("state1Select").value = lastState1;
     populateNextDropdown(lastState1);
     document.getElementById("state2Select").value = lastState2;
-
-    // Re-apply selection to rebuild map + list
     handleSelections(lastState1, lastState2);
   }
 }
@@ -1476,9 +1489,10 @@ async function handleSelections(state1, state2) {
 
   const selectedFips = [stateToFips[state1], stateToFips[state2]];
 
-  const stateFeatures = statePolygons.features.filter(
-    f => selectedFips.includes(f.properties.STATE)
-  );
+  const stateFeatures = statePolygons.features.filter(f => {
+    const fp = f.properties.STATEFP || f.properties.STATE;
+    return selectedFips.includes(fp);
+  });
 
   routePolyLayer = L.geoJSON(stateFeatures, {
     style: {
@@ -1529,6 +1543,14 @@ document.addEventListener("DOMContentLoaded", () => {
             (cent) => {
               CountyCentroids = cent;
 
+              // Fix DC
+              CountyCentroids.forEach(c => {
+                if (c.STATE === 11 || c.STATE === "11" || c.NAME === "District of Columbia") {
+                  c.STUSPS = "DC";
+                }
+              });
+
+
               // 4) Load county polygons, for County Focus mode
               fetch("https://raw.githubusercontent.com/DocFlash81/cc-data/refs/heads/main/CountyPolygons.json")
                 .then(res => res.json())
@@ -1543,10 +1565,16 @@ document.addEventListener("DOMContentLoaded", () => {
                 .then(res => res.json())
                 .then(data => {
                   window.statePolygons = data;
-                  console.log("State polygons loaded:", statePolygons);
+                  // --- normalize DC here ---
+                  data.features.forEach(f => {
+                    const p = f.properties;
+                    if (p.STATE === "11" || p.NAME === "District of Columbia") {
+                      p.STUSPS = "DC";
+                    }
+                  });
+                  console.log("State polygons loaded:", data);
                 })
                 .catch(err => console.error("Failed to load state polygons:", err));
-
 
               // Initialize map
               initMap();
